@@ -293,15 +293,17 @@ class _LoginScreenState extends State<LoginScreen> {
     }
 
     return Center(
-      child: CloudFlareTurnstile(
+      child: CloudflareTurnstile(
         key: ValueKey(_turnstileEpoch),
         siteKey: info.turnstileSiteKey!,
-        mode: TurnstileMode.managed,
         action: 'signin',
         // Turnstile checks this origin against the domains allowed for the key.
         baseUrl: info.frontendUrl ?? ApiClient().baseUrl,
-        options: TurnstileOptions(theme: TurnstileTheme.dark),
-        onTokenRecived: (token) {
+        options: TurnstileOptions(
+          theme: TurnstileTheme.dark,
+          size: TurnstileSize.flexible,
+        ),
+        onTokenReceived: (token) {
           _turnstileWatchdog?.cancel();
           if (!mounted) return;
           Logger.log('Turnstile token received', tag: 'LoginScreen');
@@ -314,12 +316,9 @@ class _LoginScreenState extends State<LoginScreen> {
           if (!mounted) return;
           setState(() => _turnstileToken = null);
         },
-        errorBuilder: (context, error) {
-          WidgetsBinding.instance.addPostFrameCallback(
-            (_) => _onTurnstileError(error.message),
-          );
-          return const SizedBox.shrink();
-        },
+        onError: (error) =>
+            _onTurnstileError('${error.message} (code ${error.code})'),
+        onTimeout: () => _onTurnstileError('The captcha timed out.'),
       ),
     );
   }
