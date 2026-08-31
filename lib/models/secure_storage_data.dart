@@ -5,7 +5,7 @@ class SecureStorageData {
   final String? apiToken;
   final String? sessionCookies;
 
-  SecureStorageData({
+  const SecureStorageData({
     this.apiToken,
     this.sessionCookies,
   });
@@ -49,6 +49,6 @@ class SecureStorageData {
   }
 
   static SecureStorageData empty() {
-    return SecureStorageData();
+    return const SecureStorageData();
   }
 }
