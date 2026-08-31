@@ -99,34 +99,21 @@ class StorageService {
   // Convenience helpers
   // -------------------------
 
-  Future<Map<String, String>?> getCredentials() async {
+  Future<String?> getApiToken() async {
     final data = await getSecureData();
-    final email = data.email;
-    final password = data.password;
-
-    if (email == null || password == null) return null;
-    return {'email': email, 'password': password};
+    final token = data.apiToken;
+    if (token == null || token.isEmpty) return null;
+    return token;
   }
 
-  Future<void> saveCredentials(String email, String password) {
-    return updateSecureData(
-      (data) => data.copyWith(email: email, password: password),
-    );
+  Future<void> saveApiToken(String token) {
+    return updateSecureData((data) => data.copyWith(apiToken: token));
   }
 
   Future<void> clearSecrets() {
     return updateSecureData(
-      (data) => data.copyWith(email: null, password: null),
+      (data) => data.copyWith(clearApiToken: true, clearSessionCookies: true),
     );
-  }
-
-  Future<bool> getRememberMe() async {
-    final prefs = await getPreferences();
-    return prefs.rememberMe;
-  }
-
-  Future<void> saveRememberMe(bool rememberMe) {
-    return updatePreferences((prefs) => prefs.copyWith(rememberMe: rememberMe));
   }
 
   Future<String?> getCustomHost() async {

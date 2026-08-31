@@ -15,8 +15,6 @@ dependencies:
 
   # HTTP and Networking Dependencies
   dio: ^5.9.0
-  dio_cookie_manager: ^3.3.0
-  cookie_jar: ^4.0.8
   http: ^1.6.0
 
   # Preference and Storage Dependencies

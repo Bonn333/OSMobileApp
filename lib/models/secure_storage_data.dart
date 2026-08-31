@@ -1,42 +1,43 @@
 import 'dart:convert';
 
-/// Model for all secure storage data (credentials, cookies, etc.)
+/// Model for all secure storage data (API token, cookies, etc.)
 class SecureStorageData {
-  final String? email;
-  final String? password;
+  final String? apiToken;
   final String? sessionCookies;
 
   SecureStorageData({
-    this.email,
-    this.password,
+    this.apiToken,
     this.sessionCookies,
   });
 
   factory SecureStorageData.fromJson(Map<String, dynamic> json) {
     return SecureStorageData(
-      email: json['email'] as String?,
-      password: json['password'] as String?,
+      apiToken: json['apiToken'] as String?,
       sessionCookies: json['sessionCookies'] as String?,
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
-      'email': email,
-      'password': password,
+      'apiToken': apiToken,
       'sessionCookies': sessionCookies,
     };
   }
 
+  /// Note the explicit `clear*` flags: a plain `field ?? this.field` cannot
+  /// distinguish "leave unchanged" from "set to null", so without them a
+  /// logout would silently keep the stored secret.
   SecureStorageData copyWith({
-    String? email,
-    String? password,
+    String? apiToken,
     String? sessionCookies,
+    bool clearApiToken = false,
+    bool clearSessionCookies = false,
   }) {
     return SecureStorageData(
-      email: email ?? this.email,
-      password: password ?? this.password,
-      sessionCookies: sessionCookies ?? this.sessionCookies,
+      apiToken: clearApiToken ? null : (apiToken ?? this.apiToken),
+      sessionCookies: clearSessionCookies
+          ? null
+          : (sessionCookies ?? this.sessionCookies),
     );
   }
 

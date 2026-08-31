@@ -1,12 +1,6 @@
-import 'dart:convert';
-
-import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio/dio.dart';
-import 'package:dio_cookie_manager/dio_cookie_manager.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/device_with_shockers.dart';
-import '../models/login_request.dart';
 import '../models/self_user.dart';
 import '../models/shared_user.dart';
 import '../utils/logger.dart';
@@ -14,25 +8,37 @@ import '../utils/logger.dart';
 class ApiClient {
   static const String defaultBaseUrl = 'https://api.openshock.app';
 
-  static const _cookieStorageKey = 'session_cookies';
+  /// OpenShock requires every request to carry a meaningful User-Agent.
+  /// Requests without one are rejected at the edge by Cloudflare with a 403
+  /// and an HTML body, long before they reach the API.
+  static const String userAgent = 'OpenShockMobile/1.0.0';
+
+  static const _apiTokenHeader = 'OpenShockToken';
   static const _tag = 'ApiClient';
 
-  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
-
   late Dio _dio;
-  late CookieJar _cookieJar;
 
   String _baseUrl;
   bool _initialized = false;
 
-  ApiClient({String? baseUrl}) : _baseUrl = baseUrl ?? defaultBaseUrl;
+  /// Held separately from the Dio instance because [setBaseUrl] rebuilds Dio,
+  /// which would otherwise silently drop the auth header.
+  String? _apiToken;
+
+  /// Shared instance.
+  ///
+  /// The API token lives in memory on this object, so every caller has to talk
+  /// to the same one. This used to not matter: authentication rode on cookies
+  /// that each new instance reloaded from secure storage, so a second
+  /// `ApiClient()` was still signed in. A second instance now would simply have
+  /// no token and get 401 on everything.
+  static final ApiClient _shared = ApiClient._internal();
+
+  factory ApiClient() => _shared;
+
+  ApiClient._internal() : _baseUrl = defaultBaseUrl;
 
   String get baseUrl => _baseUrl;
-
-  Future<CookieJar> get cookieJar async {
-    await _ensureInitialized();
-    return _cookieJar;
-  }
 
   Future<void> setBaseUrl(String baseUrl) async {
     _baseUrl = baseUrl;
@@ -40,7 +46,6 @@ class ApiClient {
     // If already initialized, we need to reinitialize Dio with the new base URL
     if (_initialized) {
       _initializeDio();
-      await _loadCookiesFromSecureStorage();
     } else {
       await _ensureInitialized();
     }
@@ -49,10 +54,7 @@ class ApiClient {
   Future<void> _ensureInitialized() async {
     if (_initialized) return;
 
-    _cookieJar = CookieJar();
     _initializeDio();
-    await _loadCookiesFromSecureStorage();
-
     _initialized = true;
   }
 
@@ -63,183 +65,47 @@ class ApiClient {
         connectTimeout: const Duration(seconds: 30),
         receiveTimeout: const Duration(seconds: 30),
         validateStatus: (status) => status != null && status < 500,
+        headers: {'User-Agent': userAgent},
       ),
     );
 
-    // Cookie manager handles session cookies automatically.
-    _dio.interceptors.add(CookieManager(_cookieJar));
+    // Re-attach the token, since this may be a rebuild after a host change.
+    _applyApiToken();
   }
 
   // -------------------------
-  // Cookies (secure storage)
+  // Authentication
   // -------------------------
 
-  Future<void> _loadCookiesFromSecureStorage() async {
-    try {
-      final cookiesJson = await _secureStorage.read(key: _cookieStorageKey);
-      if (cookiesJson == null || cookiesJson.isEmpty) return;
-
-      final decoded = jsonDecode(cookiesJson);
-      if (decoded is! List) return;
-
-      final uri = Uri.parse(_baseUrl);
-
-      final cookies = decoded
-          .whereType<Map<String, dynamic>>()
-          .map(_cookieFromJson)
-          .toList();
-
-      await _cookieJar.saveFromResponse(uri, cookies);
-
-      Logger.log(
-        'Loaded ${cookies.length} cookies from secure storage',
-        tag: _tag,
-      );
-    } catch (e, stackTrace) {
-      Logger.error(
-        'Failed to load cookies from secure storage',
-        tag: _tag,
-        error: e,
-        stackTrace: stackTrace,
-      );
-    }
-  }
-
-  Cookie _cookieFromJson(Map<String, dynamic> json) {
-    return Cookie(json['name'] as String? ?? '', json['value'] as String? ?? '')
-      ..domain = json['domain'] as String?
-      ..path = json['path'] as String?
-      ..expires = (json['expires'] is String)
-          ? DateTime.tryParse(json['expires'] as String)
-          : null
-      ..secure = json['secure'] as bool? ?? false
-      ..httpOnly = json['httpOnly'] as bool? ?? false;
-  }
-
-  Future<void> _saveCookiesToSecureStorage() async {
-    try {
-      final uri = Uri.parse(_baseUrl);
-      final cookies = await _cookieJar.loadForRequest(uri);
-
-      if (cookies.isEmpty) {
-        Logger.log('No cookies to save; clearing secure storage', tag: _tag);
-        await _secureStorage.delete(key: _cookieStorageKey);
-        return;
-      }
-
-      final cookiesList = cookies.map(_cookieToJson).toList();
-      await _secureStorage.write(
-        key: _cookieStorageKey,
-        value: jsonEncode(cookiesList),
-      );
-
-      Logger.log(
-        'Saved ${cookies.length} cookies to secure storage',
-        tag: _tag,
-      );
-    } catch (e, stackTrace) {
-      Logger.error(
-        'Failed to save cookies to secure storage',
-        tag: _tag,
-        error: e,
-        stackTrace: stackTrace,
-      );
-    }
-  }
-
-  Map<String, dynamic> _cookieToJson(Cookie cookie) => {
-    'name': cookie.name,
-    'value': cookie.value,
-    'domain': cookie.domain,
-    'path': cookie.path,
-    'expires': cookie.expires?.toIso8601String(),
-    'secure': cookie.secure,
-    'httpOnly': cookie.httpOnly,
-  };
-
-  // -------------------------
-  // Session Management
-  // -------------------------
-
-  /// Get the OpenShock session key from cookies
-  Future<String?> getSessionKey() async {
+  /// Attach (or clear) the API token sent on every request.
+  ///
+  /// The header name comes from the `ApiToken` security scheme in the OpenAPI
+  /// document (`OpenShockToken`). Note the developer wiki spells it
+  /// `Open-Shock-Token`, which the server does not recognise - the spec wins.
+  Future<void> setApiToken(String? token) async {
+    _apiToken = (token == null || token.isEmpty) ? null : token;
     await _ensureInitialized();
+    _applyApiToken();
 
-    try {
-      final uri = Uri.parse(_baseUrl);
-      final cookies = await _cookieJar.loadForRequest(uri);
+    Logger.log(
+      _apiToken == null ? 'Cleared API token' : 'API token attached',
+      tag: _tag,
+    );
+  }
 
-      // Look for the OpenShock session cookie
-      final sessionCookie = cookies.firstWhere(
-        (cookie) => cookie.name == 'openShockSession',
-        orElse: () => Cookie('', ''),
-      );
+  String? get apiToken => _apiToken;
 
-      if (sessionCookie.value.isNotEmpty) {
-        Logger.log('Found session key from cookie', tag: _tag);
-        return sessionCookie.value;
-      }
-
-      Logger.log('No session key found in cookies', tag: _tag);
-      return null;
-    } catch (e, stackTrace) {
-      Logger.error(
-        'Failed to get session key',
-        tag: _tag,
-        error: e,
-        stackTrace: stackTrace,
-      );
-      return null;
+  void _applyApiToken() {
+    if (_apiToken == null) {
+      _dio.options.headers.remove(_apiTokenHeader);
+      return;
     }
+    _dio.options.headers[_apiTokenHeader] = _apiToken;
   }
 
   // -------------------------
   // API calls
   // -------------------------
-
-  Future<ApiResponse<void>> login(LoginRequest request) async {
-    await _ensureInitialized();
-
-    try {
-      final response = await _dio.post(
-        '/1/account/login',
-        data: request.toJson(),
-      );
-
-      Logger.log('Login response status: ${response.statusCode}', tag: _tag);
-
-      if (response.statusCode == 200) {
-        await _saveCookiesToSecureStorage();
-        return ApiResponse.success(null);
-      }
-
-      if (response.statusCode == 401) {
-        return ApiResponse.error('Invalid email or password');
-      }
-
-      if (response.statusCode == 403) {
-        return ApiResponse.error('Access forbidden');
-      }
-
-      return ApiResponse.error('Login failed: ${response.statusMessage}');
-    } on DioException catch (e) {
-      Logger.error(
-        'Login DioException',
-        tag: _tag,
-        error: e,
-        stackTrace: e.stackTrace,
-      );
-      return ApiResponse.error(_handleDioError(e));
-    } catch (e, stackTrace) {
-      Logger.error(
-        'Login unexpected error',
-        tag: _tag,
-        error: e,
-        stackTrace: stackTrace,
-      );
-      return ApiResponse.error('An unexpected error occurred: $e');
-    }
-  }
 
   Future<ApiResponse<SelfUser>> getSelf() async {
     await _ensureInitialized();
@@ -270,7 +136,10 @@ class ApiClient {
         tag: _tag,
       );
       return ApiResponse.error(
-        'Failed to load self user: ${response.statusMessage}',
+        _apiMessage(
+          response,
+          fallback: 'Failed to load self user: ${response.statusCode}',
+        ),
       );
     } on DioException catch (e) {
       Logger.error(
@@ -327,7 +196,10 @@ class ApiClient {
         tag: _tag,
       );
       return ApiResponse.error(
-        'Failed to load shockers: ${response.statusMessage}',
+        _apiMessage(
+          response,
+          fallback: 'Failed to load shockers: ${response.statusCode}',
+        ),
       );
     } on DioException catch (e) {
       Logger.error(
@@ -387,7 +259,10 @@ class ApiClient {
         tag: _tag,
       );
       return ApiResponse.error(
-        'Failed to load shared shockers: ${response.statusMessage}',
+        _apiMessage(
+          response,
+          fallback: 'Failed to load shared shockers: ${response.statusCode}',
+        ),
       );
     } on DioException catch (e) {
       Logger.error(
@@ -404,36 +279,6 @@ class ApiClient {
         error: e,
         stackTrace: stackTrace,
       );
-      return ApiResponse.error('An unexpected error occurred');
-    }
-  }
-
-  Future<ApiResponse<void>> logout() async {
-    await _ensureInitialized();
-
-    try {
-      Logger.log('Logging out', tag: _tag);
-      final response = await _dio.post('/1/account/logout');
-
-      if (response.statusCode == 200) {
-        _cookieJar.deleteAll();
-        await _secureStorage.delete(key: _cookieStorageKey);
-        Logger.log('Logout successful', tag: _tag);
-        return ApiResponse.success(null);
-      }
-
-      Logger.error('Logout failed: ${response.statusCode}', tag: _tag);
-      return ApiResponse.error('Logout failed: ${response.statusMessage}');
-    } on DioException catch (e) {
-      Logger.error(
-        'Logout DioException',
-        tag: _tag,
-        error: e,
-        stackTrace: e.stackTrace,
-      );
-      return ApiResponse.error(_handleDioError(e));
-    } catch (e, stackTrace) {
-      Logger.error('Logout error', tag: _tag, error: e, stackTrace: stackTrace);
       return ApiResponse.error('An unexpected error occurred');
     }
   }
@@ -461,6 +306,23 @@ class ApiClient {
     }
 
     return null;
+  }
+
+  /// OpenShock returns RFC 7807 style errors carrying `detail` / `message` and
+  /// a machine-readable `type`. Prefer those over `statusMessage`, which is
+  /// usually empty over HTTP/2 and produced useless text like "Login failed: ".
+  ///
+  /// Falls back gracefully when the body is not JSON at all - a Cloudflare
+  /// block, for instance, answers with an HTML page.
+  String _apiMessage(Response<dynamic> response, {required String fallback}) {
+    final data = response.data;
+    if (data is Map<String, dynamic>) {
+      for (final key in const ['detail', 'message', 'title']) {
+        final value = data[key];
+        if (value is String && value.trim().isNotEmpty) return value.trim();
+      }
+    }
+    return fallback;
   }
 
   String _handleDioError(DioException e) {

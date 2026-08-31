@@ -17,17 +17,15 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   static const _bgColor = Color(0xFF0A0A0A);
-  static const _dialogBgColor = Color(0xFF1A1A1A);
   static const _pagePadding = EdgeInsets.all(24);
+  static const _apiTokensUrl = 'https://openshock.app/settings/api-tokens';
 
   final _formKey = GlobalKey<FormState>();
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
+  final _tokenController = TextEditingController();
   final _customHostController = TextEditingController();
 
-  bool _rememberMe = true;
   bool _showAdvanced = false;
-  bool _obscurePassword = true;
+  bool _obscureToken = true;
   bool _isLoading = false;
 
   @override
@@ -43,8 +41,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
+    _tokenController.dispose();
     _customHostController.dispose();
     super.dispose();
   }
@@ -86,20 +83,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final isValid = _formKey.currentState?.validate() ?? false;
     if (!isValid) return;
 
-    if (!_rememberMe) {
-      Logger.log(
-        'User disabled remember me, showing warning',
-        tag: 'LoginScreen',
-      );
-
-      final shouldContinue = await _showNoSaveWarning();
-      if (!shouldContinue || !mounted) {
-        Logger.log('User cancelled login after warning', tag: 'LoginScreen');
-        return;
-      }
-    }
-
-    Logger.log('Starting login process', tag: 'LoginScreen');
+    Logger.log('Starting sign-in process', tag: 'LoginScreen');
     _setLoading(true);
 
     // Show loading snackbar
@@ -121,11 +105,7 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     }
 
-    final success = await authProvider.loginWithCredentials(
-      _emailController.text.trim(),
-      _passwordController.text,
-      rememberMe: _rememberMe,
-    );
+    final success = await authProvider.loginWithToken(_tokenController.text);
 
     _setLoading(false);
     if (!mounted) return;
@@ -135,7 +115,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (success) {
       Logger.log(
-        'Login successful, navigating to overview',
+        'Sign-in successful, navigating to overview',
         tag: 'LoginScreen',
       );
       Navigator.of(context).pushAndRemoveUntil(
@@ -145,77 +125,12 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    Logger.error('Login failed, showing error to user', tag: 'LoginScreen');
+    Logger.error('Sign-in failed, showing error to user', tag: 'LoginScreen');
     CustomSnackbar.error(
       context,
-      title: 'Login Failed',
-      description: authProvider.error ?? 'Please check your credentials',
+      title: 'Sign In Failed',
+      description: authProvider.error ?? 'Please check your API token',
     );
-  }
-
-  Future<bool> _showNoSaveWarning() async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: _dialogBgColor,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        icon: const Icon(
-          Icons.warning_amber_rounded,
-          color: Colors.orange,
-          size: 48,
-        ),
-        title: const Text(
-          'Not Saving Login?',
-          style: TextStyle(color: Colors.white),
-          textAlign: TextAlign.center,
-        ),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'You will need to login every time you open the app.',
-              style: TextStyle(color: Colors.white70),
-              textAlign: TextAlign.center,
-            ),
-            SizedBox(height: 16),
-            Text(
-              'It is highly recommended to enable "Remember me" for a better experience.',
-              style: TextStyle(
-                color: Colors.white70,
-                fontWeight: FontWeight.w500,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              setState(() => _rememberMe = true);
-              Navigator.of(context).pop(false);
-            },
-            child: const Text(
-              'Enable Remember Me',
-              style: TextStyle(color: Colors.green),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Continue Anyway'),
-          ),
-        ],
-      ),
-    );
-
-    return result ?? false;
   }
 
   Future<void> _handleBack() async {
@@ -227,14 +142,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final rememberBg = _rememberMe
-        ? Colors.green.withValues(alpha: 0.1)
-        : Colors.orange.withValues(alpha: 0.1);
-
-    final rememberBorder = _rememberMe
-        ? Colors.green.withValues(alpha: 0.3)
-        : Colors.orange.withValues(alpha: 0.3);
-
     final canGoBack = Navigator.of(context).canPop();
 
     return PopScope(
@@ -283,105 +190,90 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Enter your credentials to continue',
+                    'Sign in with an OpenShock API token',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.white70, fontSize: 14),
                   ),
                   const SizedBox(height: 40),
 
-                  // Email
+                  // API token
                   TextFormField(
-                    controller: _emailController,
+                    controller: _tokenController,
                     style: const TextStyle(color: Colors.white),
-                    keyboardType: TextInputType.emailAddress,
+                    obscureText: _obscureToken,
+                    autocorrect: false,
+                    enableSuggestions: false,
                     decoration: _inputDecoration(
-                      labelText: 'Email',
-                      prefixIcon: Icons.email,
-                    ),
-                    validator: (value) {
-                      final v = value?.trim() ?? '';
-                      if (v.isEmpty) return 'Please enter your email';
-                      if (!v.contains('@')) return 'Please enter a valid email';
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Password
-                  TextFormField(
-                    controller: _passwordController,
-                    style: const TextStyle(color: Colors.white),
-                    obscureText: _obscurePassword,
-                    decoration: _inputDecoration(
-                      labelText: 'Password',
-                      prefixIcon: Icons.lock,
+                      labelText: 'API Token',
+                      prefixIcon: Icons.key,
                       suffixIcon: IconButton(
                         icon: Icon(
-                          _obscurePassword
+                          _obscureToken
                               ? Icons.visibility
                               : Icons.visibility_off,
                           color: Colors.white70,
                         ),
-                        onPressed: () => setState(
-                          () => _obscurePassword = !_obscurePassword,
-                        ),
+                        onPressed: () =>
+                            setState(() => _obscureToken = !_obscureToken),
                       ),
                     ),
                     validator: (value) {
-                      if ((value ?? '').isEmpty) {
-                        return 'Please enter your password';
+                      if ((value ?? '').trim().isEmpty) {
+                        return 'Please enter your API token';
                       }
                       return null;
                     },
                   ),
                   const SizedBox(height: 20),
 
-                  // Remember me
+                  // Where to get a token
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: rememberBg,
+                      color: Colors.blue.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: rememberBorder),
+                      border: Border.all(
+                        color: Colors.blue.withValues(alpha: 0.3),
+                      ),
                     ),
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Checkbox(
-                          value: _rememberMe,
-                          onChanged: (value) =>
-                              setState(() => _rememberMe = value ?? false),
-                          fillColor: WidgetStateProperty.resolveWith((states) {
-                            if (states.contains(WidgetState.selected)) {
-                              return Colors.white;
-                            }
-                            return Colors.white.withValues(alpha: 0.3);
-                          }),
-                          checkColor: Colors.black,
-                        ),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Remember me on this device',
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.info_outline,
+                              color: Colors.white70,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Text(
+                                'Where do I get a token?',
                                 style: TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
-                              const SizedBox(height: 4),
-                              Text(
-                                _rememberMe
-                                    ? 'Your credentials will be saved securely'
-                                    : 'Recommended: Stay signed in for easy access',
-                                style: TextStyle(
-                                  color: _rememberMe
-                                      ? Colors.green.shade200
-                                      : Colors.orange.shade200,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Create one under Settings → API Tokens on the '
+                          'OpenShock website, then paste it above.',
+                          style: TextStyle(
+                            color: Colors.blue.shade100,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        SelectableText(
+                          _apiTokensUrl,
+                          style: TextStyle(
+                            color: Colors.blue.shade200,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
                       ],

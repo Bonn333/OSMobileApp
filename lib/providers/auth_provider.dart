@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 
-import '../models/login_request.dart';
 import '../models/self_user.dart';
 import '../services/api_client.dart';
 import '../services/storage_service.dart';
@@ -39,56 +38,29 @@ class AuthProvider extends ChangeNotifier {
     try {
       await _applyStoredHostIfAny();
 
-      final cookieJar = await _apiClient.cookieJar;
-      final cookies = await cookieJar.loadForRequest(
-        Uri.parse(_apiClient.baseUrl),
-      );
-
-      // First, check if we have saved session cookies
-      if (cookies.isNotEmpty) {
-        Logger.log(
-          'Found saved session cookies, validating session',
-          tag: _tag,
-        );
-
-        // Try to validate the session using getSelf
-        final selfResponse = await _apiClient.getSelf();
-        if (selfResponse.isSuccess && selfResponse.data != null) {
-          Logger.log('Session is valid, user authenticated', tag: _tag);
-          _selfUser = selfResponse.data;
-          _setState(AuthState.authenticated);
-          return;
-        }
-
-        Logger.log(
-          'Session validation failed, cookies may be expired',
-          tag: _tag,
-        );
+      final token = await _storageService.getApiToken();
+      if (token == null) {
+        Logger.log('No stored API token, user needs to sign in', tag: _tag);
+        _setState(AuthState.unauthenticated);
+        return;
       }
 
-      // If no valid session, check for saved credentials
-      final rememberMe = await _storageService.getRememberMe();
-      if (rememberMe) {
-        final credentials = await _storageService.getCredentials();
-        if (credentials != null) {
-          Logger.log(
-            'Found saved credentials, attempting auto-login',
-            tag: _tag,
-          );
+      Logger.log('Found stored API token, validating it', tag: _tag);
+      await _apiClient.setApiToken(token);
 
-          await loginWithCredentials(
-            credentials['email']!,
-            credentials['password']!,
-            rememberMe: true,
-          );
-          return;
-        }
+      final selfResponse = await _apiClient.getSelf();
+      if (selfResponse.isSuccess && selfResponse.data != null) {
+        Logger.log('Token is valid, user authenticated', tag: _tag);
+        _selfUser = selfResponse.data;
+        _setState(AuthState.authenticated);
+        return;
       }
 
-      Logger.log(
-        'No saved session or credentials, user needs to login',
-        tag: _tag,
-      );
+      // The token was revoked or has expired; drop it so the user is not shown
+      // a stale signed-in state that fails on the next request.
+      Logger.log('Stored API token is no longer valid, clearing', tag: _tag);
+      await _apiClient.setApiToken(null);
+      await _storageService.clearSecrets();
       _setState(AuthState.unauthenticated);
     } catch (e, stackTrace) {
       _error = 'Failed to initialize: $e';
@@ -102,65 +74,56 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  Future<bool> loginWithCredentials(
-    String email,
-    String password, {
-    bool rememberMe = false,
-  }) async {
-    final trimmedEmail = email.trim();
+  /// Sign in with an API token created at
+  /// <https://openshock.app/settings/api-tokens>.
+  ///
+  /// Password sign-in is not available to this app: `POST /1/account/login` was
+  /// retired (410 Gone) and its replacement `POST /2/account/login` requires a
+  /// Cloudflare Turnstile token, which a native client cannot produce without
+  /// embedding a captcha webview. API tokens are the authentication method the
+  /// OpenShock developer documentation points third-party clients at.
+  Future<bool> loginWithToken(String apiToken) async {
+    final trimmedToken = apiToken.trim();
 
-    Logger.log('loginWithCredentials called for $trimmedEmail', tag: _tag);
+    Logger.log('loginWithToken called', tag: _tag);
     _setState(AuthState.loading, clearError: true);
 
+    if (trimmedToken.isEmpty) {
+      _error = 'Please enter an API token';
+      _setState(AuthState.unauthenticated);
+      return false;
+    }
+
     try {
-      // 1) Login to set a session cookie.
-      Logger.log('Calling API login', tag: _tag);
-      final loginResponse = await _apiClient.login(
-        LoginRequest(email: trimmedEmail, password: password),
-      );
+      await _apiClient.setApiToken(trimmedToken);
 
-      Logger.log(
-        'Login response success: ${loginResponse.isSuccess}',
-        tag: _tag,
-      );
-
-      if (!loginResponse.isSuccess) {
-        _error = loginResponse.error;
-        Logger.error('Login failed: $_error', tag: _tag);
-        _setState(AuthState.unauthenticated);
-        return false;
-      }
-
-      // 2) Fetch self user data and validate session
-      Logger.log('Fetching self user data', tag: _tag);
+      // The token is only proven good once an authenticated call succeeds.
+      Logger.log('Validating token via self user lookup', tag: _tag);
       final selfResponse = await _apiClient.getSelf();
+
       if (!selfResponse.isSuccess || selfResponse.data == null) {
-        _error = 'Failed to fetch user data';
-        Logger.error('Failed to fetch self user data', tag: _tag);
+        _error = selfResponse.error ?? 'Failed to fetch user data';
+        Logger.error('Token validation failed: $_error', tag: _tag);
+        await _apiClient.setApiToken(null);
         _setState(AuthState.unauthenticated);
         return false;
       }
 
       _selfUser = selfResponse.data;
+      await _storageService.saveApiToken(trimmedToken);
 
-      // 4) Persist remember-me choice + credentials.
-      await _persistRememberMe(
-        rememberMe: rememberMe,
-        email: trimmedEmail,
-        password: password,
-      );
-
-      Logger.log('Login successful', tag: _tag);
+      Logger.log('Sign-in successful', tag: _tag);
       _setState(AuthState.authenticated);
       return true;
     } catch (e, stackTrace) {
-      _error = 'Login failed: $e';
+      _error = 'Sign-in failed: $e';
       Logger.error(
-        'Login exception: $_error',
+        'Sign-in exception: $_error',
         tag: _tag,
         error: e,
         stackTrace: stackTrace,
       );
+      await _apiClient.setApiToken(null);
       _setState(AuthState.unauthenticated);
       return false;
     }
@@ -170,20 +133,10 @@ class AuthProvider extends ChangeNotifier {
     Logger.log('Logging out user', tag: _tag);
     _setState(AuthState.loading, clearError: true);
 
-    try {
-      await _apiClient.logout();
-    } catch (e) {
-      Logger.log(
-        'Logout API call failed, continuing with local logout',
-        tag: _tag,
-      );
-      // Intentionally ignore logout errors.
-    }
-
+    // Nothing to invalidate server-side: the token stays valid until the user
+    // revokes it on the website, so signing out just forgets it locally.
+    await _apiClient.setApiToken(null);
     await _storageService.clearSecrets();
-    await _storageService.saveRememberMe(
-      false,
-    ); // optional but keeps state consistent
 
     _selfUser = null;
     Logger.log('Logout complete', tag: _tag);
@@ -204,24 +157,6 @@ class AuthProvider extends ChangeNotifier {
 
     Logger.log('Using custom host: $customHost', tag: _tag);
     await _apiClient.setBaseUrl(customHost);
-  }
-
-  Future<void> _persistRememberMe({
-    required bool rememberMe,
-    required String email,
-    required String password,
-  }) async {
-    Logger.log('Remember me: $rememberMe', tag: _tag);
-
-    if (rememberMe) {
-      await _storageService.saveCredentials(email, password);
-      await _storageService.saveRememberMe(true);
-      return;
-    }
-
-    // Keep preference accurate and make sure secrets are cleared.
-    await _storageService.saveRememberMe(false);
-    await _storageService.clearSecrets();
   }
 
   void _setState(AuthState state, {bool clearError = false}) {
