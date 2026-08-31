@@ -25,10 +25,10 @@ jobs:
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
@@ -119,14 +119,14 @@ jobs:
              build/app/outputs/bundle/release/openshock_mobile-${{ env.VERSION }}.aab
 
       - name: Upload APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openshock_mobile-${{ env.VERSION }}-apk
           path: build/app/outputs/flutter-apk/openshock_mobile-${{ env.VERSION }}.apk
           if-no-files-found: error
 
       - name: Upload App Bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openshock_mobile-${{ env.VERSION }}-aab
           path: build/app/outputs/bundle/release/openshock_mobile-${{ env.VERSION }}.aab
@@ -137,7 +137,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -201,7 +201,7 @@ jobs:
           rm -rf _verify
 
       - name: Upload iOS build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openshock_mobile-${{ env.VERSION }}-ipa
           path: build/ios/iphoneos/openshock_mobile-${{ env.VERSION }}.ipa
@@ -227,7 +227,7 @@ jobs:
         run: echo "VERSION=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -236,7 +236,7 @@ jobs:
         run: ls -lR dist
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/openshock_mobile-${{ env.VERSION }}.apk
