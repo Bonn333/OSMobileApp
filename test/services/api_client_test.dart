@@ -1,7 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:openshock_mobile/services/api_client.dart';
 
+import '../test_helpers.dart';
+
 void main() {
+  setUpFakeStorage();
+
   group('ApiClient', () {
     test('defaults to the official API host', () {
       expect(ApiClient.defaultBaseUrl, 'https://api.openshock.app');
