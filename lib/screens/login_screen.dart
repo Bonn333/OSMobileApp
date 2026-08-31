@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloudflare_turnstile/cloudflare_turnstile.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -39,6 +41,8 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _turnstileToken;
 
   int _turnstileEpoch = 0;
+  String? _turnstileError;
+  Timer? _turnstileWatchdog;
 
   @override
   void initState() {
@@ -48,10 +52,12 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _loadBackendInfo() async {
+    _turnstileWatchdog?.cancel();
     setState(() {
       _loadingBackendInfo = true;
       _backendInfoError = null;
       _turnstileToken = null;
+      _turnstileError = null;
     });
 
     final response = await ApiClient().getBackendInfo();
@@ -61,7 +67,9 @@ class _LoginScreenState extends State<LoginScreen> {
       _loadingBackendInfo = false;
       if (response.isSuccess && response.data != null) {
         _backendInfo = response.data;
-        if (!_backendInfo!.isTurnstileEnabled) {
+        if (_backendInfo!.isTurnstileEnabled) {
+          _startTurnstileWatchdog();
+        } else {
           _turnstileToken = _turnstileDisabledPlaceholder;
         }
       } else {
@@ -72,6 +80,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
+    _turnstileWatchdog?.cancel();
     _identifierController.dispose();
     _passwordController.dispose();
     _customHostController.dispose();
@@ -140,11 +149,37 @@ class _LoginScreenState extends State<LoginScreen> {
     if (_backendInfo?.isTurnstileEnabled ?? false) {
       setState(() {
         _turnstileToken = null;
+        _turnstileError = null;
         _turnstileEpoch++;
       });
+      _startTurnstileWatchdog();
     } else {
       setState(() => _turnstileToken = _turnstileDisabledPlaceholder);
     }
+  }
+
+  /// The widget renders itself fully transparent until the challenge reports
+  /// ready, so a challenge that never loads is invisible rather than broken
+  /// looking. Surface that instead of leaving a dead Sign In button.
+  void _startTurnstileWatchdog() {
+    _turnstileWatchdog?.cancel();
+    _turnstileWatchdog = Timer(const Duration(seconds: 20), () {
+      if (!mounted || _turnstileToken != null || _turnstileError != null) {
+        return;
+      }
+      Logger.error('Turnstile did not produce a token', tag: 'LoginScreen');
+      setState(() => _turnstileError = 'The captcha did not load.');
+    });
+  }
+
+  void _onTurnstileError(String message) {
+    Logger.error('Turnstile error: $message', tag: 'LoginScreen');
+    _turnstileWatchdog?.cancel();
+    if (!mounted) return;
+    setState(() {
+      _turnstileToken = null;
+      _turnstileError = message;
+    });
   }
 
   Future<void> _handleLogin() async {
@@ -253,25 +288,79 @@ class _LoginScreenState extends State<LoginScreen> {
       return const SizedBox.shrink();
     }
 
-    return CloudFlareTurnstile(
-      key: ValueKey(_turnstileEpoch),
-      siteKey: info.turnstileSiteKey!,
-      mode: TurnstileMode.managed,
-      action: 'signin',
-      // Turnstile checks this origin against the domains allowed for the key.
-      baseUrl: info.frontendUrl ?? ApiClient().baseUrl,
-      options: TurnstileOptions(theme: TurnstileTheme.dark),
-      onTokenRecived: (token) {
-        if (!mounted) return;
-        setState(() => _turnstileToken = token);
-      },
-      onTokenExpired: () {
-        if (!mounted) return;
-        setState(() => _turnstileToken = null);
-      },
-      errorBuilder: (context, error) => Text(
-        error.message,
-        style: TextStyle(color: Colors.red.shade200, fontSize: 12),
+    if (_turnstileError != null) {
+      return _turnstileErrorCard(_turnstileError!);
+    }
+
+    return Center(
+      child: CloudFlareTurnstile(
+        key: ValueKey(_turnstileEpoch),
+        siteKey: info.turnstileSiteKey!,
+        mode: TurnstileMode.managed,
+        action: 'signin',
+        // Turnstile checks this origin against the domains allowed for the key.
+        baseUrl: info.frontendUrl ?? ApiClient().baseUrl,
+        options: TurnstileOptions(theme: TurnstileTheme.dark),
+        onTokenRecived: (token) {
+          _turnstileWatchdog?.cancel();
+          if (!mounted) return;
+          Logger.log('Turnstile token received', tag: 'LoginScreen');
+          setState(() {
+            _turnstileToken = token;
+            _turnstileError = null;
+          });
+        },
+        onTokenExpired: () {
+          if (!mounted) return;
+          setState(() => _turnstileToken = null);
+        },
+        errorBuilder: (context, error) {
+          WidgetsBinding.instance.addPostFrameCallback(
+            (_) => _onTurnstileError(error.message),
+          );
+          return const SizedBox.shrink();
+        },
+      ),
+    );
+  }
+
+  Widget _turnstileErrorCard(String message) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.orange.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, color: Colors.orange),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  message,
+                  style: TextStyle(color: Colors.orange.shade100, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Sign in needs the captcha. You can retry, or use the website.',
+            style: TextStyle(color: Colors.orange.shade200, fontSize: 11),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: _resetTurnstile,
+              child: const Text('Retry captcha'),
+            ),
+          ),
+        ],
       ),
     );
   }
