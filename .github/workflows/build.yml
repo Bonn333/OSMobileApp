@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [master]
+    tags: ["v*"]
   pull_request:
     branches: [master]
   workflow_dispatch:
@@ -90,10 +91,49 @@ jobs:
 
       - name: Package unsigned .ipa
         run: |
+          set -euo pipefail
           cd build/ios/iphoneos
+          rm -rf Payload
           mkdir Payload
-          cp -r Runner.app Payload/Runner.app
-          zip -r -X "openshock_mobile-${{ env.VERSION }}.ipa" Payload
+          # ditto preserves bundle structure, symlinks and extended attributes
+          # exactly; a plain `cp -r` can mangle framework bundles.
+          ditto Runner.app Payload/Runner.app
+          # Strip Finder droppings that confuse some installers.
+          find Payload -name '.DS_Store' -delete
+          zip -r -y -X "openshock_mobile-${{ env.VERSION }}.ipa" Payload \
+            -x '**/.DS_Store' '**/__MACOSX/*'
+
+      - name: Verify .ipa structure
+        run: |
+          set -euo pipefail
+          cd build/ios/iphoneos
+          IPA="openshock_mobile-${{ env.VERSION }}.ipa"
+
+          # An IPA must be a zip whose first entry path is Payload/<App>.app/
+          file "$IPA"
+          unzip -l "$IPA" | head -20
+
+          # Info.plist must exist and be a parseable plist. If this file is ever
+          # HTML or truncated, on-device installers fail with
+          # NSCocoaErrorDomain 3840 "unknown tag html".
+          rm -rf _verify && mkdir _verify
+          unzip -q "$IPA" 'Payload/Runner.app/Info.plist' -d _verify
+          plutil -lint _verify/Payload/Runner.app/Info.plist
+          echo "CFBundleIdentifier: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' _verify/Payload/Runner.app/Info.plist)"
+          echo "CFBundleVersion:    $(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' _verify/Payload/Runner.app/Info.plist)"
+
+          # Executable must be present and be a real Mach-O binary.
+          test -f Payload/Runner.app/Runner
+          file Payload/Runner.app/Runner | grep -q 'Mach-O'
+
+          # This build is intentionally unsigned - make that explicit in the log
+          # so a failed install is not mistaken for a packaging bug.
+          if [ -d Payload/Runner.app/_CodeSignature ]; then
+            echo "NOTE: bundle carries a code signature"
+          else
+            echo "NOTE: bundle is UNSIGNED - it must be re-signed (Sideloadly, AltStore, or a dev/enterprise cert) before iOS will install it"
+          fi
+          rm -rf _verify
 
       - name: Upload iOS build
         uses: actions/upload-artifact@v4
@@ -101,3 +141,42 @@ jobs:
           name: openshock_mobile-${{ env.VERSION }}-ipa
           path: build/ios/iphoneos/openshock_mobile-${{ env.VERSION }}.ipa
           if-no-files-found: error
+
+  # Actions artifacts are always re-zipped by GitHub and their download URLs
+  # require authentication, so an on-device installer pointed at one receives an
+  # HTML login page instead of the file. Release assets are served raw over an
+  # unauthenticated URL, which is what an installer needs.
+  release:
+    name: Publish release assets
+    needs: [android, ios]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Set version string
+        run: echo "VERSION=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List downloaded files
+        run: ls -lR dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/openshock_mobile-${{ env.VERSION }}.apk
+            dist/openshock_mobile-${{ env.VERSION }}.aab
+            dist/openshock_mobile-${{ env.VERSION }}.ipa
+          fail_on_unmatched_files: true
+          body: |
+            Unsigned builds from `${{ github.sha }}`.
+
+            The `.ipa` is **unsigned** and cannot be installed on a stock iPhone
+            as-is. Sign it first with Sideloadly, AltStore, or your own
+            developer/enterprise certificate.
