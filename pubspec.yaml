@@ -20,7 +20,7 @@ dependencies:
   http: ^1.6.0
 
   # Used for turnstile
-  webview_flutter: ^4.10.0
+  cloudflare_turnstile: ^2.1.5
 
   # Preference and Storage Dependencies
   shared_preferences: ^2.5.4

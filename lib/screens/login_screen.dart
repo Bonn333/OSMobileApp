@@ -1,3 +1,4 @@
+import 'package:cloudflare_turnstile/cloudflare_turnstile.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -6,7 +7,6 @@ import '../providers/auth_provider.dart';
 import '../services/api_client.dart';
 import '../utils/logger.dart';
 import '../widgets/custom_snackbar.dart';
-import '../widgets/turnstile_challenge.dart';
 import 'overview_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -268,14 +268,26 @@ class _LoginScreenState extends State<LoginScreen> {
       return const SizedBox.shrink();
     }
 
-    return TurnstileChallenge(
+    return CloudFlareTurnstile(
       key: ValueKey(_turnstileEpoch),
       siteKey: info.turnstileSiteKey!,
+      mode: TurnstileMode.managed,
+      action: 'signin',
+      // Turnstile checks this origin against the domains allowed for the key.
       baseUrl: info.frontendUrl ?? ApiClient().baseUrl,
-      onToken: (token) {
+      options: TurnstileOptions(theme: TurnstileTheme.dark),
+      onTokenRecived: (token) {
         if (!mounted) return;
         setState(() => _turnstileToken = token);
       },
+      onTokenExpired: () {
+        if (!mounted) return;
+        setState(() => _turnstileToken = null);
+      },
+      errorBuilder: (context, error) => Text(
+        error.message,
+        style: TextStyle(color: Colors.red.shade200, fontSize: 12),
+      ),
     );
   }
 
