@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-/// Model for all secure storage data (API token, cookies, etc.)
 class SecureStorageData {
   final String? apiToken;
   final String? sessionCookies;
@@ -24,9 +23,6 @@ class SecureStorageData {
     };
   }
 
-  /// Note the explicit `clear*` flags: a plain `field ?? this.field` cannot
-  /// distinguish "leave unchanged" from "set to null", so without them a
-  /// logout would silently keep the stored secret.
   SecureStorageData copyWith({
     String? apiToken,
     String? sessionCookies,

@@ -19,8 +19,8 @@ dependencies:
   cookie_jar: ^4.0.8
   http: ^1.6.0
 
-  # Hosts the Cloudflare Turnstile widget that /2/account/login requires
-  webview_flutter: ^4.10.0
+  # Used for turnstile
+  cloudflare_turnstile: ^3.8.1
 
   # Preference and Storage Dependencies
   shared_preferences: ^2.5.4
@@ -48,3 +48,9 @@ flutter:
 
   assets:
     - assets/os/
+
+# cloudflare_turnstile 3.x needs web ^1.1.1, but signalr_core pins
+# web_socket_channel ^2.4.3, which pins web ^0.5.0. Only the browser code path
+# of web_socket_channel touches web, and this app ships android/ios.
+dependency_overrides:
+  web: ^1.1.1

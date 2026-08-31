@@ -1,14 +1,9 @@
-/// Response of `GET /1`, the unauthenticated metadata endpoint.
-///
-/// This is how a client discovers the Cloudflare Turnstile site key rather than
-/// hardcoding it, which also makes self-hosted instances work: they publish
-/// their own key, or none at all when Turnstile is switched off.
+/// Response of `GET /1`.
 class BackendInfo {
   final String version;
   final String? frontendUrl;
 
-  /// Null or empty when the instance has Turnstile disabled. The official
-  /// frontend treats that as "no challenge required" and posts a placeholder.
+  /// Null when the instance has Turnstile disabled.
   final String? turnstileSiteKey;
 
   const BackendInfo({

@@ -8,14 +8,8 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// Release signing material is supplied out-of-band via android/key.properties,
-// which is gitignored, alongside the keystore it points at. CI writes both from
-// repository secrets; see .github/workflows/build.yml.
-//
-// When the file is absent - a plain local build, or a fork PR that cannot read
-// secrets - the build falls back to the ephemeral debug keystore so it still
-// succeeds. Such a build is signed with a throwaway key and is not
-// distributable; the workflow refuses to produce a tagged release from one.
+// Signing config comes from android/key.properties, which is gitignored.
+// Without it the build falls back to the debug keystore.
 val keystorePropertiesFile = rootProject.file("key.properties")
 val keystoreProperties = Properties().apply {
     if (keystorePropertiesFile.exists()) {
@@ -62,10 +56,6 @@ android {
 
     buildTypes {
         release {
-            // The release keystore keeps the signature stable across builds, so
-            // an update installs over a previous one. The runner's own debug
-            // keystore is regenerated per job, which would make every CI build
-            // refuse to install over the last.
             signingConfig = if (hasKeystore) {
                 signingConfigs.getByName("release")
             } else {

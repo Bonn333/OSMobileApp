@@ -33,10 +33,7 @@ void main() {
       expect(updated.apiToken, 'token-xyz');
       expect(updated.sessionCookies, 'cookie-jar');
     });
-
-    // Regression test: `field ?? this.field` cannot tell "leave unchanged" from
-    // "set to null", so passing an explicit null silently kept the old secret
-    // and a logout left the token on disk.
+    
     test('copyWith clears the token when asked, not when passed null', () {
       const data = SecureStorageData(
         apiToken: 'token-abc',
