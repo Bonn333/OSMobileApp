@@ -15,13 +15,9 @@ import '../utils/logger.dart';
 class ApiClient {
   static const String defaultBaseUrl = 'https://api.openshock.app';
 
-  /// OpenShock requires every request to carry a meaningful User-Agent.
-  /// Requests without one are rejected at the edge by Cloudflare with a 403
-  /// and an HTML body, long before they reach the API.
+  /// Required: Cloudflare rejects requests with an empty User-Agent.
   static const String userAgent = 'OpenShockMobile/1.0.0';
 
-  /// Name of the session cookie the API sets on a successful login. It matches
-  /// the `UserSessionCookie` security scheme in the OpenAPI document.
   static const String sessionCookieName = 'openShockSession';
 
   static const _cookieStorageKey = 'session_cookies';
@@ -35,7 +31,7 @@ class ApiClient {
   String _baseUrl;
   bool _initialized = false;
 
-  /// Shared instance, so every caller sees the same session.
+  /// Shared so every caller sees the same session.
   static final ApiClient _shared = ApiClient._internal();
 
   factory ApiClient() => _shared;
@@ -81,7 +77,6 @@ class ApiClient {
       ),
     );
 
-    // The cookie manager carries the session cookie on every request.
     _dio.interceptors.add(CookieManager(_cookieJar));
   }
 
@@ -161,7 +156,7 @@ class ApiClient {
     'httpOnly': cookie.httpOnly,
   };
 
-  /// Value of the session cookie, used to authenticate the SignalR hub.
+  /// Session cookie value, used to authenticate the SignalR hub.
   Future<String?> getSessionKey() async {
     await _ensureInitialized();
 
@@ -188,9 +183,7 @@ class ApiClient {
   // API calls
   // -------------------------
 
-  /// `GET /1` - unauthenticated metadata, including the Turnstile site key the
-  /// login screen needs. Fetched at runtime rather than hardcoded so that a
-  /// self-hosted instance supplies its own key, or none when it is disabled.
+  /// `GET /1` - server metadata, including the Turnstile site key.
   Future<ApiResponse<BackendInfo>> getBackendInfo() async {
     await _ensureInitialized();
 
@@ -225,8 +218,7 @@ class ApiClient {
     }
   }
 
-  /// `POST /2/account/login`. On success the server sets the session cookie,
-  /// which the cookie manager stores and we persist to secure storage.
+  /// `POST /2/account/login`. On success the server sets the session cookie.
   Future<ApiResponse<void>> login(LoginRequest request) async {
     await _ensureInitialized();
 
@@ -247,8 +239,6 @@ class ApiClient {
         return ApiResponse.error('Invalid username/email or password');
       }
 
-      // The API distinguishes a failed captcha from a plain rejection through
-      // the `type` field, so say which one it was.
       if (response.statusCode == 403) {
         final type = _errorType(response);
         if (type != null && type.startsWith('Turnstile')) {
@@ -261,7 +251,7 @@ class ApiClient {
         );
       }
 
-      // 410 means this client is calling an endpoint the server has retired.
+      // The endpoint has been retired, so the app is out of date.
       if (response.statusCode == 410) {
         return ApiResponse.error(
           _apiMessage(
@@ -283,7 +273,7 @@ class ApiClient {
     }
   }
 
-  /// `POST /1/account/logout` - invalidates the session server-side.
+  /// `POST /1/account/logout`.
   Future<ApiResponse<void>> logout() async {
     await _ensureInitialized();
 
@@ -299,7 +289,6 @@ class ApiClient {
         _apiMessage(response, fallback: 'Logout failed: ${response.statusCode}'),
       );
     } on DioException catch (e) {
-      // The local session is dropped either way, so a failure is not fatal.
       await _cookieJar.deleteAll();
       await _secureStorage.delete(key: _cookieStorageKey);
       return ApiResponse.error(_handleDioError(e));
@@ -508,12 +497,8 @@ class ApiClient {
     return null;
   }
 
-  /// OpenShock returns RFC 7807 style errors carrying `detail` / `message` and
-  /// a machine-readable `type`. Prefer those over `statusMessage`, which is
-  /// usually empty over HTTP/2 and produced useless text like "Login failed: ".
-  ///
-  /// Falls back gracefully when the body is not JSON at all - a Cloudflare
-  /// block, for instance, answers with an HTML page.
+  /// Reads the API's RFC 7807 error text. `statusMessage` is usually empty
+  /// over HTTP/2, and a Cloudflare block returns HTML rather than JSON.
   String _apiMessage(Response<dynamic> response, {required String fallback}) {
     final data = response.data;
     if (data is Map<String, dynamic>) {
@@ -525,8 +510,8 @@ class ApiClient {
     return fallback;
   }
 
-  /// Machine-readable error discriminator, e.g. `Turnstile.Invalid`. Used to
-  /// tell a failed captcha apart from an ordinary rejection, since both are 403.
+  /// Error discriminator, e.g. `Turnstile.Invalid`. Both captcha failures and
+  /// ordinary rejections are 403, so the type is what separates them.
   String? _errorType(Response<dynamic> response) {
     final data = response.data;
     if (data is Map<String, dynamic>) {

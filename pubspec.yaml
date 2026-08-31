@@ -19,7 +19,7 @@ dependencies:
   cookie_jar: ^4.0.8
   http: ^1.6.0
 
-  # Hosts the Cloudflare Turnstile widget that /2/account/login requires
+  # Used for turnstile
   webview_flutter: ^4.10.0
 
   # Preference and Storage Dependencies

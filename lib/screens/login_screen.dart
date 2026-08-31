@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import '../models/backend_info.dart';
 import '../providers/auth_provider.dart';
 import '../services/api_client.dart';
-import '../services/storage_service.dart';
 import '../utils/logger.dart';
 import '../widgets/custom_snackbar.dart';
 import '../widgets/turnstile_challenge.dart';
@@ -21,10 +20,11 @@ class _LoginScreenState extends State<LoginScreen> {
   static const _bgColor = Color(0xFF0A0A0A);
   static const _pagePadding = EdgeInsets.all(24);
 
-  /// Sent when the instance reports no site key, i.e. Turnstile is disabled.
-  /// The API still requires the field to be present and non-empty. This mirrors
-  /// PUBLIC_TURNSTILE_DEV_BYPASS_VALUE in the official web frontend.
+  /// Sent when Turnstile is disabled; the API still requires a non-empty value.
   static const _turnstileDisabledPlaceholder = 'INVALID';
+
+  static final _emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+  static final _usernamePattern = RegExp(r'^[A-Za-z0-9._-]{3,32}$');
 
   final _formKey = GlobalKey<FormState>();
   final _identifierController = TextEditingController();
@@ -40,7 +40,6 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _backendInfoError;
   String? _turnstileToken;
 
-  // Rebuilding the challenge with a fresh key forces a new puzzle.
   int _turnstileEpoch = 0;
 
   @override
@@ -50,8 +49,6 @@ class _LoginScreenState extends State<LoginScreen> {
     _loadBackendInfo();
   }
 
-  /// The Turnstile site key is not hardcoded: it comes from `GET /1`, so a
-  /// self-hosted instance supplies its own, or none when it is switched off.
   Future<void> _loadBackendInfo() async {
     setState(() {
       _loadingBackendInfo = true;
@@ -66,7 +63,6 @@ class _LoginScreenState extends State<LoginScreen> {
       _loadingBackendInfo = false;
       if (response.isSuccess && response.data != null) {
         _backendInfo = response.data;
-        // Nothing to solve when the server has Turnstile disabled.
         if (!_backendInfo!.isTurnstileEnabled) {
           _turnstileToken = _turnstileDisabledPlaceholder;
         }
@@ -117,11 +113,45 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  bool get _canSubmit => !_isLoading && _turnstileToken != null;
+  bool get _canSubmit =>
+      !_isLoading && _turnstileToken != null && !_hostChangePending;
 
+  /// A token is only valid for the instance that issued it.
+  bool get _hostChangePending {
+    if (!_showAdvanced) return false;
+    final host = _customHostController.text.trim();
+    return host.isNotEmpty && host != context.read<AuthProvider>().currentHost;
+  }
+
+  Future<void> _applyHostChange() async {
+    final host = _customHostController.text.trim();
+    if (host.isEmpty) return;
+
+    final authProvider = context.read<AuthProvider>();
+    if (host == authProvider.currentHost) return;
+
+    Logger.log('Applying custom host: $host', tag: 'LoginScreen');
+    await authProvider.setCustomHost(host);
+    if (!mounted) return;
+
+    await _loadBackendInfo();
+  }
+
+  String? _validateIdentifier(String? value) {
+    final v = (value ?? '').trim();
+    if (v.isEmpty) return 'Please enter your username or email';
+
+    if (v.contains('@')) {
+      return _emailPattern.hasMatch(v) ? null : 'Enter a valid email address';
+    }
+
+    return _usernamePattern.hasMatch(v)
+        ? null
+        : 'Usernames are 3-32 characters: letters, numbers, . _ -';
+  }
+
+  /// Tokens are single-use, so a failed attempt needs a new one.
   void _resetTurnstile() {
-    // A Turnstile token is single-use: once the server has seen it, the widget
-    // has to be solved again before another attempt.
     if (_backendInfo?.isTurnstileEnabled ?? false) {
       setState(() {
         _turnstileToken = null;
@@ -158,14 +188,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
     final authProvider = context.read<AuthProvider>();
 
-    if (_showAdvanced && _customHostController.text.trim().isNotEmpty) {
-      final customUrl = _customHostController.text.trim();
-      if (customUrl != authProvider.currentHost) {
-        Logger.log('Updating custom host from login screen', tag: 'LoginScreen');
-        await authProvider.setCustomHost(customUrl);
-      }
-    }
-
     final success = await authProvider.loginWithCredentials(
       _identifierController.text,
       _passwordController.text,
@@ -178,7 +200,10 @@ class _LoginScreenState extends State<LoginScreen> {
     CustomSnackbar.dismiss('login');
 
     if (success) {
-      Logger.log('Sign-in successful, navigating to overview', tag: 'LoginScreen');
+      Logger.log(
+        'Sign-in successful, navigating to overview',
+        tag: 'LoginScreen',
+      );
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const OverviewScreen()),
         (route) => false,
@@ -196,10 +221,7 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Future<void> _handleBack() async {
-    Logger.log('User navigating back to onboarding', tag: 'LoginScreen');
-    await StorageService().setOnboardingComplete(false);
-    if (!mounted) return;
+  void _handleBack() {
     Navigator.of(context).pop();
   }
 
@@ -243,15 +265,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
     final info = _backendInfo;
     if (info == null || !info.isTurnstileEnabled) {
-      // Turnstile is disabled on this instance; nothing for the user to solve.
       return const SizedBox.shrink();
     }
 
     return TurnstileChallenge(
       key: ValueKey(_turnstileEpoch),
       siteKey: info.turnstileSiteKey!,
-      // Turnstile checks the hostname rendering the widget against the domains
-      // registered for the site key, so use the instance's own frontend origin.
       baseUrl: info.frontendUrl ?? ApiClient().baseUrl,
       onToken: (token) {
         if (!mounted) return;
@@ -264,189 +283,178 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     final canGoBack = Navigator.of(context).canPop();
 
-    return PopScope(
-      onPopInvokedWithResult: (didPop, result) async {
-        if (didPop) {
-          await StorageService().setOnboardingComplete(false);
-        }
-      },
-      child: Scaffold(
-        backgroundColor: _bgColor,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          automaticallyImplyLeading: false,
-          leading: canGoBack
-              ? IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Colors.white70),
-                  onPressed: _handleBack,
-                )
-              : null,
-        ),
-        body: SafeArea(
-          child: SingleChildScrollView(
-            padding: _pagePadding,
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Center(
-                    child: Image.asset(
-                      'assets/os/Icon512.png',
-                      width: 80,
-                      height: 80,
-                    ),
+    return Scaffold(
+      backgroundColor: _bgColor,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        automaticallyImplyLeading: false,
+        leading: canGoBack
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.white70),
+                onPressed: _handleBack,
+              )
+            : null,
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: _pagePadding,
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Image.asset(
+                    'assets/os/Icon512.png',
+                    width: 80,
+                    height: 80,
                   ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Sign In',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                    ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Sign In',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
                   ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Enter your credentials to continue',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white70, fontSize: 14),
-                  ),
-                  const SizedBox(height: 40),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Enter your credentials to continue',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white70, fontSize: 14),
+                ),
+                const SizedBox(height: 40),
 
-                  // Username or email
+                // Username or email
+                TextFormField(
+                  controller: _identifierController,
+                  style: const TextStyle(color: Colors.white),
+                  keyboardType: TextInputType.emailAddress,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: _inputDecoration(
+                    labelText: 'Username or Email',
+                    prefixIcon: Icons.person,
+                  ),
+                  validator: _validateIdentifier,
+                ),
+                const SizedBox(height: 16),
+
+                // Password
+                TextFormField(
+                  controller: _passwordController,
+                  style: const TextStyle(color: Colors.white),
+                  obscureText: _obscurePassword,
+                  decoration: _inputDecoration(
+                    labelText: 'Password',
+                    prefixIcon: Icons.lock,
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility
+                            : Icons.visibility_off,
+                        color: Colors.white70,
+                      ),
+                      onPressed: () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
+                    ),
+                  ),
+                  validator: (value) {
+                    if ((value ?? '').isEmpty) {
+                      return 'Please enter your password';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 20),
+
+                _buildTurnstileSection(),
+                const SizedBox(height: 8),
+
+                // Advanced Settings toggle
+                TextButton(
+                  onPressed: () =>
+                      setState(() => _showAdvanced = !_showAdvanced),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _showAdvanced ? Icons.expand_less : Icons.expand_more,
+                        color: Colors.white70,
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Advanced Settings',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                ),
+
+                if (_showAdvanced) ...[
+                  const SizedBox(height: 16),
                   TextFormField(
-                    controller: _identifierController,
+                    controller: _customHostController,
                     style: const TextStyle(color: Colors.white),
-                    keyboardType: TextInputType.emailAddress,
-                    autocorrect: false,
-                    enableSuggestions: false,
+                    onChanged: (_) => setState(() {}),
+                    onFieldSubmitted: (_) => _applyHostChange(),
                     decoration: _inputDecoration(
-                      labelText: 'Username or Email',
-                      prefixIcon: Icons.person,
+                      labelText: 'Custom Server Host',
+                      prefixIcon: Icons.dns,
+                      hintText: ApiClient.defaultBaseUrl,
                     ),
                     validator: (value) {
-                      if ((value ?? '').trim().isEmpty) {
-                        return 'Please enter your username or email';
+                      final v = value?.trim() ?? '';
+                      if (v.isEmpty) return null;
+
+                      final uri = Uri.tryParse(v);
+                      if (uri == null || !uri.hasScheme) {
+                        return 'Please enter a valid URL (e.g., https://api.example.com)';
                       }
                       return null;
                     },
                   ),
-                  const SizedBox(height: 16),
+                ],
 
-                  // Password
-                  TextFormField(
-                    controller: _passwordController,
-                    style: const TextStyle(color: Colors.white),
-                    obscureText: _obscurePassword,
-                    decoration: _inputDecoration(
-                      labelText: 'Password',
-                      prefixIcon: Icons.lock,
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          _obscurePassword
-                              ? Icons.visibility
-                              : Icons.visibility_off,
-                          color: Colors.white70,
-                        ),
-                        onPressed: () => setState(
-                          () => _obscurePassword = !_obscurePassword,
-                        ),
-                      ),
+                const SizedBox(height: 24),
+
+                ElevatedButton(
+                  onPressed: _canSubmit ? _handleLogin : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: Colors.black,
+                    disabledBackgroundColor: Colors.white24,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    validator: (value) {
-                      if ((value ?? '').isEmpty) {
-                        return 'Please enter your password';
-                      }
-                      return null;
-                    },
+                    elevation: 0,
                   ),
-                  const SizedBox(height: 20),
-
-                  _buildTurnstileSection(),
-                  const SizedBox(height: 8),
-
-                  // Advanced Settings toggle
-                  TextButton(
-                    onPressed: () =>
-                        setState(() => _showAdvanced = !_showAdvanced),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _showAdvanced ? Icons.expand_less : Icons.expand_more,
-                          color: Colors.white70,
-                        ),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'Advanced Settings',
-                          style: TextStyle(color: Colors.white70),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  if (_showAdvanced) ...[
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _customHostController,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: _inputDecoration(
-                        labelText: 'Custom Server Host',
-                        prefixIcon: Icons.dns,
-                        hintText: ApiClient.defaultBaseUrl,
-                      ),
-                      validator: (value) {
-                        final v = value?.trim() ?? '';
-                        if (v.isEmpty) return null;
-
-                        final uri = Uri.tryParse(v);
-                        if (uri == null || !uri.hasScheme) {
-                          return 'Please enter a valid URL (e.g., https://api.example.com)';
-                        }
-                        return null;
-                      },
-                    ),
-                  ],
-
-                  const SizedBox(height: 24),
-
-                  ElevatedButton(
-                    onPressed: _canSubmit ? _handleLogin : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.black,
-                      disabledBackgroundColor: Colors.white24,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      elevation: 0,
-                    ),
-                    child: _isLoading
-                        ? const SizedBox(
-                            height: 20,
-                            width: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.black,
-                              ),
-                            ),
-                          )
-                        : const Text(
-                            'Sign In',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
+                  child: _isLoading
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.black,
                             ),
                           ),
-                  ),
-                  const SizedBox(height: 24),
-                ],
-              ),
+                        )
+                      : const Text(
+                          'Sign In',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                ),
+                const SizedBox(height: 24),
+              ],
             ),
           ),
         ),

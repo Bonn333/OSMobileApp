@@ -15,9 +15,7 @@ jobs:
   android:
     name: Build Android
     runs-on: ubuntu-latest
-    # Secrets cannot be referenced from a step-level `if:`, so surface them as
-    # job environment variables and branch on those instead. A fork PR sees
-    # these as empty and falls back to an ephemeral debug key.
+    # Secrets can't be used in a step-level `if:`, so expose them as env vars.
     env:
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -48,9 +46,6 @@ jobs:
       - name: Test
         run: flutter test
 
-      # A tagged build produces the artifacts published to the release page, so
-      # refuse to build one with the throwaway debug key rather than shipping a
-      # release nobody can upgrade and Play will not accept.
       - name: Require a release key for tagged builds
         if: startsWith(github.ref, 'refs/tags/v') && env.ANDROID_KEYSTORE_BASE64 == ''
         run: |
@@ -62,15 +57,9 @@ jobs:
         if: env.ANDROID_KEYSTORE_BASE64 != ''
         run: |
           set -euo pipefail
-          # `base64 -d` fails loudly on a malformed secret rather than writing a
-          # truncated keystore that only breaks later during the build.
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/keystore.jks
-          # A PKCS12 keystore - keytool's default since Java 9 - cannot hold a
-          # key password that differs from the store password; keytool ignores
-          # -keypass with a warning. Supplying a different one here fails the
-          # build with "Given final block not properly padded", so default the
-          # key password to the store password unless one is explicitly set.
-          # storeFile is resolved relative to the app module directory.
+          # PKCS12 can't hold a key password that differs from the store
+          # password, so default it. storeFile is relative to the app module.
           {
             echo "storeFile=keystore.jks"
             echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
@@ -102,8 +91,7 @@ jobs:
             echo "apksigner not found; skipping certificate report."
             exit 0
           fi
-          # The SHA-256 digest identifies the signing key. It has to stay the
-          # same between builds for an update to install over a previous one.
+          # This digest must stay the same between builds.
           "$APKSIGNER" verify --print-certs \
             build/app/outputs/flutter-apk/app-release.apk \
             | grep -E 'SHA-256 digest|certificate DN' || true
@@ -160,10 +148,8 @@ jobs:
           cd build/ios/iphoneos
           rm -rf Payload
           mkdir Payload
-          # ditto preserves bundle structure, symlinks and extended attributes
-          # exactly; a plain `cp -r` can mangle framework bundles.
+          # ditto preserves symlinks that `cp -r` can mangle.
           ditto Runner.app Payload/Runner.app
-          # Strip Finder droppings that confuse some installers.
           find Payload -name '.DS_Store' -delete
           zip -r -y -X "openshock_mobile-${{ env.VERSION }}.ipa" Payload \
             -x '**/.DS_Store' '**/__MACOSX/*'
@@ -174,25 +160,18 @@ jobs:
           cd build/ios/iphoneos
           IPA="openshock_mobile-${{ env.VERSION }}.ipa"
 
-          # An IPA must be a zip whose first entry path is Payload/<App>.app/
           file "$IPA"
           unzip -l "$IPA" | head -20
 
-          # Info.plist must exist and be a parseable plist. If this file is ever
-          # HTML or truncated, on-device installers fail with
-          # NSCocoaErrorDomain 3840 "unknown tag html".
           rm -rf _verify && mkdir _verify
           unzip -q "$IPA" 'Payload/Runner.app/Info.plist' -d _verify
           plutil -lint _verify/Payload/Runner.app/Info.plist
           echo "CFBundleIdentifier: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' _verify/Payload/Runner.app/Info.plist)"
           echo "CFBundleVersion:    $(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' _verify/Payload/Runner.app/Info.plist)"
 
-          # Executable must be present and be a real Mach-O binary.
           test -f Payload/Runner.app/Runner
           file Payload/Runner.app/Runner | grep -q 'Mach-O'
 
-          # This build is intentionally unsigned - make that explicit in the log
-          # so a failed install is not mistaken for a packaging bug.
           if [ -d Payload/Runner.app/_CodeSignature ]; then
             echo "NOTE: bundle carries a code signature"
           else
@@ -207,14 +186,8 @@ jobs:
           path: build/ios/iphoneos/openshock_mobile-${{ env.VERSION }}.ipa
           if-no-files-found: error
 
-  # Actions artifacts are re-zipped by GitHub and sit behind an authenticated
-  # URL, so you cannot hand one straight to a device. Release assets are served
-  # raw and unauthenticated, which makes the .ipa directly downloadable.
-  #
-  # Note this does NOT make the .ipa installable: the bundle produced by
-  # `--no-codesign` has no _CodeSignature and no embedded.mobileprovision, so
-  # iOS refuses it regardless of how it is delivered. It must be re-signed
-  # first (Sideloadly / AltStore with a free Apple ID, or a real cert).
+  # Publishes raw files, unlike Actions artifacts which are zipped and
+  # require login to download.
   release:
     name: Publish release assets
     needs: [android, ios]
@@ -244,13 +217,11 @@ jobs:
             dist/openshock_mobile-${{ env.VERSION }}.ipa
           fail_on_unmatched_files: true
           body: |
-            Builds from `${{ github.sha }}`.
+            Build `${{ github.sha }}`.
 
-            The `.apk` and `.aab` are signed with the project's release key and
-            install directly. Android will refuse to install over a copy signed
-            with a different key, so uninstall any earlier debug-signed build
-            first.
+            **Android** - install the `.apk` directly. The `.aab` is for Google
+            Play. If an older build is installed with a different signing key,
+            uninstall it first.
 
-            The `.ipa` is **unsigned** and cannot be installed on a stock iPhone
-            as-is. Sign it first with Sideloadly, AltStore, or your own
-            developer/enterprise certificate.
+            **iOS** - the `.ipa` is not signed. Sign it with Sideloadly or
+            AltStore before installing.

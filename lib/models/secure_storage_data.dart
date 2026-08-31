@@ -24,9 +24,8 @@ class SecureStorageData {
     };
   }
 
-  /// Note the explicit `clear*` flags: a plain `field ?? this.field` cannot
-  /// distinguish "leave unchanged" from "set to null", so without them a
-  /// logout would silently keep the stored secret.
+  /// The `clear*` flags exist because `field ?? this.field` cannot express
+  /// "set to null".
   SecureStorageData copyWith({
     String? apiToken,
     String? sessionCookies,

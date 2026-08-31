@@ -1,28 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-/// Renders a Cloudflare Turnstile widget inside a WebView and reports the token
-/// it produces.
-///
-/// `POST /2/account/login` requires a verified Turnstile token, and the only
-/// way to obtain one is to run Cloudflare's browser-side widget. The official
-/// web frontend does exactly this; see `Turnstile.svelte` in OpenShock/Frontend.
-///
-/// The page is loaded with [baseUrl] as its origin rather than as a bare
-/// `data:` document, because Turnstile validates the hostname of the page
-/// hosting the widget against the domains registered for the site key. Passing
-/// the instance's own frontend URL is what makes the challenge accepted.
+/// Renders a Cloudflare Turnstile widget in a WebView and reports its token.
 class TurnstileChallenge extends StatefulWidget {
-  /// Site key from `GET /1` (`turnstileSiteKey`).
   final String siteKey;
 
-  /// Origin the widget is rendered under. Use the instance's `frontendUrl`.
+  /// Turnstile checks this origin against the domains allowed for the site key.
   final String baseUrl;
 
-  /// Turnstile action label. The web frontend uses `signin` on its login page.
   final String action;
 
-  /// Called with the token, or null when the challenge expires or errors.
+  /// Null when the challenge expires or errors.
   final ValueChanged<String?> onToken;
 
   const TurnstileChallenge({
@@ -55,8 +43,6 @@ class _TurnstileChallengeState extends State<TurnstileChallenge> {
 
   void _onMessage(JavaScriptMessage message) {
     final value = message.message;
-    // The bridge reports an empty string for expiry, timeout and error, all of
-    // which invalidate any token already handed over.
     widget.onToken(value.isEmpty ? null : value);
   }
 
@@ -113,10 +99,6 @@ class _TurnstileChallengeState extends State<TurnstileChallenge> {
 
   @override
   Widget build(BuildContext context) {
-    // Turnstile's widget is a fixed 300x65; give it a little room to breathe.
-    return SizedBox(
-      height: 80,
-      child: WebViewWidget(controller: _controller),
-    );
+    return SizedBox(height: 80, child: WebViewWidget(controller: _controller));
   }
 }

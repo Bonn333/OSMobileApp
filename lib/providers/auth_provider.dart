@@ -39,9 +39,8 @@ class AuthProvider extends ChangeNotifier {
     try {
       await _applyStoredHostIfAny();
 
-      // The persisted session cookie is the only thing that can restore a
-      // session without user interaction: re-submitting a stored password is
-      // impossible now that login requires a fresh Turnstile token.
+      // Only the session cookie can restore a session; a stored password
+      // cannot be replayed without a fresh Turnstile token.
       final cookieJar = await _apiClient.cookieJar;
       final cookies = await cookieJar.loadForRequest(
         Uri.parse(_apiClient.baseUrl),
@@ -76,13 +75,7 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Sign in with a username or email and password against
-  /// `POST /2/account/login`.
-  ///
-  /// [turnstileResponse] must be a token produced by the Cloudflare Turnstile
-  /// widget, which the server verifies. On an instance with Turnstile disabled
-  /// the API still requires the field to be present and non-empty, so the login
-  /// screen sends a placeholder in that case, mirroring the web frontend.
+  /// Sign in via `POST /2/account/login`.
   Future<bool> loginWithCredentials(
     String usernameOrEmail,
     String password, {
@@ -121,8 +114,6 @@ class AuthProvider extends ChangeNotifier {
         return false;
       }
 
-      // Login only sets the cookie; prove it actually works before reporting
-      // the user as signed in.
       final selfResponse = await _apiClient.getSelf();
       if (!selfResponse.isSuccess || selfResponse.data == null) {
         _error = selfResponse.error ?? 'Failed to fetch user data';
@@ -155,7 +146,6 @@ class AuthProvider extends ChangeNotifier {
     try {
       await _apiClient.logout();
     } catch (e) {
-      // The local session is cleared regardless, so this is not fatal.
       Logger.log('Logout API call failed, clearing locally', tag: _tag);
     }
 
