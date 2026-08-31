@@ -142,10 +142,14 @@ jobs:
           path: build/ios/iphoneos/openshock_mobile-${{ env.VERSION }}.ipa
           if-no-files-found: error
 
-  # Actions artifacts are always re-zipped by GitHub and their download URLs
-  # require authentication, so an on-device installer pointed at one receives an
-  # HTML login page instead of the file. Release assets are served raw over an
-  # unauthenticated URL, which is what an installer needs.
+  # Actions artifacts are re-zipped by GitHub and sit behind an authenticated
+  # URL, so you cannot hand one straight to a device. Release assets are served
+  # raw and unauthenticated, which makes the .ipa directly downloadable.
+  #
+  # Note this does NOT make the .ipa installable: the bundle produced by
+  # `--no-codesign` has no _CodeSignature and no embedded.mobileprovision, so
+  # iOS refuses it regardless of how it is delivered. It must be re-signed
+  # first (Sideloadly / AltStore with a free Apple ID, or a real cert).
   release:
     name: Publish release assets
     needs: [android, ios]
