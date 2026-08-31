@@ -13,8 +13,16 @@ env:
 
 jobs:
   android:
-    name: Build Android (unsigned)
+    name: Build Android
     runs-on: ubuntu-latest
+    # Secrets cannot be referenced from a step-level `if:`, so surface them as
+    # job environment variables and branch on those instead. A fork PR sees
+    # these as empty and falls back to an ephemeral debug key.
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,11 +48,49 @@ jobs:
       - name: Test
         run: flutter test
 
-      - name: Build unsigned APK
+      - name: Configure signing key
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        run: |
+          set -euo pipefail
+          # `base64 -d` fails loudly on a malformed secret rather than writing a
+          # truncated keystore that only breaks later during the build.
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/keystore.jks
+          # storeFile is resolved relative to the app module directory.
+          {
+            echo "storeFile=keystore.jks"
+            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > android/key.properties
+          echo "Signing configured with the supplied keystore."
+
+      - name: Warn when no signing key is configured
+        if: env.ANDROID_KEYSTORE_BASE64 == ''
+        run: |
+          echo "::warning::ANDROID_KEYSTORE_BASE64 is not set - building with an" \
+               "ephemeral debug key. The signature changes every run, so this" \
+               "build will not install over a previous one."
+
+      - name: Build APK
         run: flutter build apk --release
 
-      - name: Build unsigned App Bundle
+      - name: Build App Bundle
         run: flutter build appbundle --release
+
+      - name: Report signing certificate
+        run: |
+          set -uo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          APKSIGNER=$(find "$SDK/build-tools" -name apksigner 2>/dev/null | sort -V | tail -1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "apksigner not found; skipping certificate report."
+            exit 0
+          fi
+          # The SHA-256 digest identifies the signing key. It has to stay the
+          # same between builds for an update to install over a previous one.
+          "$APKSIGNER" verify --print-certs \
+            build/app/outputs/flutter-apk/app-release.apk \
+            | grep -E 'SHA-256 digest|certificate DN' || true
 
       - name: Set version string
         run: echo "VERSION=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
@@ -182,7 +228,11 @@ jobs:
             dist/openshock_mobile-${{ env.VERSION }}.ipa
           fail_on_unmatched_files: true
           body: |
-            Unsigned builds from `${{ github.sha }}`.
+            Builds from `${{ github.sha }}`.
+
+            The `.apk` is signed with the project's debug key. It installs
+            directly, but a debug key is not accepted by Google Play and its
+            password is public, so treat it as a convenience for testing only.
 
             The `.ipa` is **unsigned** and cannot be installed on a stock iPhone
             as-is. Sign it first with Sideloadly, AltStore, or your own
