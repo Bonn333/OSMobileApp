@@ -38,9 +38,6 @@ class AuthProvider extends ChangeNotifier {
 
     try {
       await _applyStoredHostIfAny();
-
-      // Only the session cookie can restore a session; a stored password
-      // cannot be replayed without a fresh Turnstile token.
       final cookieJar = await _apiClient.cookieJar;
       final cookies = await cookieJar.loadForRequest(
         Uri.parse(_apiClient.baseUrl),
@@ -75,7 +72,6 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Sign in via `POST /2/account/login`.
   Future<bool> loginWithCredentials(
     String usernameOrEmail,
     String password, {

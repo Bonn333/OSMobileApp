@@ -23,7 +23,6 @@ class _LoginScreenState extends State<LoginScreen> {
   static const _bgColor = Color(0xFF0A0A0A);
   static const _pagePadding = EdgeInsets.all(24);
 
-  /// Sent when Turnstile is disabled; the API still requires a non-empty value.
   static const _turnstileDisabledPlaceholder = 'INVALID';
 
   final _formKey = GlobalKey<FormState>();
@@ -158,9 +157,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  /// The widget renders itself fully transparent until the challenge reports
-  /// ready, so a challenge that never loads is invisible rather than broken
-  /// looking. Surface that instead of leaving a dead Sign In button.
   void _startTurnstileWatchdog() {
     _turnstileWatchdog?.cancel();
     _turnstileWatchdog = Timer(const Duration(seconds: 20), () {
@@ -297,7 +293,6 @@ class _LoginScreenState extends State<LoginScreen> {
         key: ValueKey(_turnstileEpoch),
         siteKey: info.turnstileSiteKey!,
         action: 'signin',
-        // Turnstile checks this origin against the domains allowed for the key.
         baseUrl: info.frontendUrl ?? ApiClient().baseUrl,
         options: TurnstileOptions(
           theme: TurnstileTheme.dark,

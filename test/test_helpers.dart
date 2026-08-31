@@ -6,11 +6,6 @@ const MethodChannel _secureStorageChannel = MethodChannel(
   'plugins.it_nomads.com/flutter_secure_storage',
 );
 
-/// Backs the storage plugins with in-memory fakes.
-///
-/// Without this, anything touching FlutterSecureStorage throws
-/// "Binding has not yet been initialized" and the code under test swallows it,
-/// leaving a passing test buried in stack traces.
 void setUpFakeStorage({Map<String, String> initialSecureValues = const {}}) {
   TestWidgetsFlutterBinding.ensureInitialized();
 

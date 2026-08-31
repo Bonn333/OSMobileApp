@@ -1,4 +1,3 @@
-/// Request body for `POST /2/account/login`.
 class LoginRequest {
   final String usernameOrEmail;
   final String password;

@@ -13,8 +13,6 @@ void main() {
       expect(validateUsernameOrEmail('someone@example.com'), isNull);
     });
 
-    // Anything with an @ can only be an email: the server refuses usernames
-    // that contain one.
     test('rejects a malformed email', () {
       expect(validateUsernameOrEmail('someone@'), isNotNull);
       expect(validateUsernameOrEmail('@example.com'), isNotNull);
@@ -39,8 +37,6 @@ void main() {
       expect(validateUsernameOrEmail('user\u0007name'), isNotNull);
     });
 
-    // The server only forbids leading and trailing whitespace, so a name with
-    // an inner space stays valid once trimmed.
     test('trims surrounding whitespace', () {
       expect(validateUsernameOrEmail('  sticks  '), isNull);
       expect(validateUsernameOrEmail('some one'), isNull);

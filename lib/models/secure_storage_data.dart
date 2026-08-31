@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-/// Model for all secure storage data (API token, cookies, etc.)
 class SecureStorageData {
   final String? apiToken;
   final String? sessionCookies;
@@ -24,8 +23,6 @@ class SecureStorageData {
     };
   }
 
-  /// The `clear*` flags exist because `field ?? this.field` cannot express
-  /// "set to null".
   SecureStorageData copyWith({
     String? apiToken,
     String? sessionCookies,
