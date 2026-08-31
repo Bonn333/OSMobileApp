@@ -60,6 +60,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
     try {
       // Get session key from API client
       final sessionKey = await _apiClient.getSessionKey();
+      if (!mounted) return;
       if (sessionKey == null) {
         Logger.error(
           'No session key available for WebSocket',
@@ -96,6 +97,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
         _handleDeviceStatusUpdate(event.args);
       });
 
+      if (!mounted) return;
       CustomSnackbar.success(
         context,
         title: 'WebSocket Connected',
@@ -109,6 +111,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
         stackTrace: stackTrace,
       );
 
+      if (!mounted) return;
       CustomSnackbar.error(
         context,
         title: 'WebSocket Connection Failed',

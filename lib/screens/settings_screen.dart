@@ -576,7 +576,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     await authProvider.logout();
 
-    if (!mounted) return;
+    if (!context.mounted) return;
 
     // Dismiss loading snackbar
     CustomSnackbar.dismiss('logout');

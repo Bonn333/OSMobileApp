@@ -504,7 +504,7 @@ class _HubSetupScreenState extends State<HubSetupScreen> {
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 itemCount: networks.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 10),
+                separatorBuilder: (_, _) => const SizedBox(height: 10),
                 itemBuilder: (_, i) => _networkTile(networks[i]),
               ),
           ],
