@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../models/login_request.dart';
 import '../models/self_user.dart';
 import '../services/api_client.dart';
 import '../services/storage_service.dart';
@@ -38,29 +39,30 @@ class AuthProvider extends ChangeNotifier {
     try {
       await _applyStoredHostIfAny();
 
-      final token = await _storageService.getApiToken();
-      if (token == null) {
-        Logger.log('No stored API token, user needs to sign in', tag: _tag);
+      // The persisted session cookie is the only thing that can restore a
+      // session without user interaction: re-submitting a stored password is
+      // impossible now that login requires a fresh Turnstile token.
+      final cookieJar = await _apiClient.cookieJar;
+      final cookies = await cookieJar.loadForRequest(
+        Uri.parse(_apiClient.baseUrl),
+      );
+
+      if (cookies.isEmpty) {
+        Logger.log('No stored session, user needs to sign in', tag: _tag);
         _setState(AuthState.unauthenticated);
         return;
       }
 
-      Logger.log('Found stored API token, validating it', tag: _tag);
-      await _apiClient.setApiToken(token);
-
+      Logger.log('Found stored session, validating it', tag: _tag);
       final selfResponse = await _apiClient.getSelf();
       if (selfResponse.isSuccess && selfResponse.data != null) {
-        Logger.log('Token is valid, user authenticated', tag: _tag);
+        Logger.log('Session is valid, user authenticated', tag: _tag);
         _selfUser = selfResponse.data;
         _setState(AuthState.authenticated);
         return;
       }
 
-      // The token was revoked or has expired; drop it so the user is not shown
-      // a stale signed-in state that fails on the next request.
-      Logger.log('Stored API token is no longer valid, clearing', tag: _tag);
-      await _apiClient.setApiToken(null);
-      await _storageService.clearSecrets();
+      Logger.log('Stored session is no longer valid', tag: _tag);
       _setState(AuthState.unauthenticated);
     } catch (e, stackTrace) {
       _error = 'Failed to initialize: $e';
@@ -74,56 +76,73 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Sign in with an API token created at
-  /// <https://openshock.app/settings/api-tokens>.
+  /// Sign in with a username or email and password against
+  /// `POST /2/account/login`.
   ///
-  /// Password sign-in is not available to this app: `POST /1/account/login` was
-  /// retired (410 Gone) and its replacement `POST /2/account/login` requires a
-  /// Cloudflare Turnstile token, which a native client cannot produce without
-  /// embedding a captcha webview. API tokens are the authentication method the
-  /// OpenShock developer documentation points third-party clients at.
-  Future<bool> loginWithToken(String apiToken) async {
-    final trimmedToken = apiToken.trim();
+  /// [turnstileResponse] must be a token produced by the Cloudflare Turnstile
+  /// widget, which the server verifies. On an instance with Turnstile disabled
+  /// the API still requires the field to be present and non-empty, so the login
+  /// screen sends a placeholder in that case, mirroring the web frontend.
+  Future<bool> loginWithCredentials(
+    String usernameOrEmail,
+    String password, {
+    required String turnstileResponse,
+  }) async {
+    final identifier = usernameOrEmail.trim();
 
-    Logger.log('loginWithToken called', tag: _tag);
+    Logger.log('loginWithCredentials called', tag: _tag);
     _setState(AuthState.loading, clearError: true);
 
-    if (trimmedToken.isEmpty) {
-      _error = 'Please enter an API token';
+    if (identifier.isEmpty || password.isEmpty) {
+      _error = 'Please enter your username and password';
+      _setState(AuthState.unauthenticated);
+      return false;
+    }
+
+    if (turnstileResponse.isEmpty) {
+      _error = 'Please complete the captcha first';
       _setState(AuthState.unauthenticated);
       return false;
     }
 
     try {
-      await _apiClient.setApiToken(trimmedToken);
+      final loginResponse = await _apiClient.login(
+        LoginRequest(
+          usernameOrEmail: identifier,
+          password: password,
+          turnstileResponse: turnstileResponse,
+        ),
+      );
 
-      // The token is only proven good once an authenticated call succeeds.
-      Logger.log('Validating token via self user lookup', tag: _tag);
+      if (!loginResponse.isSuccess) {
+        _error = loginResponse.error;
+        Logger.error('Login failed: $_error', tag: _tag);
+        _setState(AuthState.unauthenticated);
+        return false;
+      }
+
+      // Login only sets the cookie; prove it actually works before reporting
+      // the user as signed in.
       final selfResponse = await _apiClient.getSelf();
-
       if (!selfResponse.isSuccess || selfResponse.data == null) {
         _error = selfResponse.error ?? 'Failed to fetch user data';
-        Logger.error('Token validation failed: $_error', tag: _tag);
-        await _apiClient.setApiToken(null);
+        Logger.error('Failed to fetch self user data', tag: _tag);
         _setState(AuthState.unauthenticated);
         return false;
       }
 
       _selfUser = selfResponse.data;
-      await _storageService.saveApiToken(trimmedToken);
-
-      Logger.log('Sign-in successful', tag: _tag);
+      Logger.log('Login successful', tag: _tag);
       _setState(AuthState.authenticated);
       return true;
     } catch (e, stackTrace) {
-      _error = 'Sign-in failed: $e';
+      _error = 'Login failed: $e';
       Logger.error(
-        'Sign-in exception: $_error',
+        'Login exception: $_error',
         tag: _tag,
         error: e,
         stackTrace: stackTrace,
       );
-      await _apiClient.setApiToken(null);
       _setState(AuthState.unauthenticated);
       return false;
     }
@@ -133,9 +152,13 @@ class AuthProvider extends ChangeNotifier {
     Logger.log('Logging out user', tag: _tag);
     _setState(AuthState.loading, clearError: true);
 
-    // Nothing to invalidate server-side: the token stays valid until the user
-    // revokes it on the website, so signing out just forgets it locally.
-    await _apiClient.setApiToken(null);
+    try {
+      await _apiClient.logout();
+    } catch (e) {
+      // The local session is cleared regardless, so this is not fatal.
+      Logger.log('Logout API call failed, clearing locally', tag: _tag);
+    }
+
     await _storageService.clearSecrets();
 
     _selfUser = null;

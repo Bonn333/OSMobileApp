@@ -15,7 +15,12 @@ dependencies:
 
   # HTTP and Networking Dependencies
   dio: ^5.9.0
+  dio_cookie_manager: ^3.3.0
+  cookie_jar: ^4.0.8
   http: ^1.6.0
+
+  # Hosts the Cloudflare Turnstile widget that /2/account/login requires
+  webview_flutter: ^4.10.0
 
   # Preference and Storage Dependencies
   shared_preferences: ^2.5.4

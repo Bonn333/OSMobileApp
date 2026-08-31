@@ -1,6 +1,13 @@
-import 'package:dio/dio.dart';
+import 'dart:convert';
 
+import 'package:cookie_jar/cookie_jar.dart';
+import 'package:dio/dio.dart';
+import 'package:dio_cookie_manager/dio_cookie_manager.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+import '../models/backend_info.dart';
 import '../models/device_with_shockers.dart';
+import '../models/login_request.dart';
 import '../models/self_user.dart';
 import '../models/shared_user.dart';
 import '../utils/logger.dart';
@@ -13,25 +20,22 @@ class ApiClient {
   /// and an HTML body, long before they reach the API.
   static const String userAgent = 'OpenShockMobile/1.0.0';
 
-  static const _apiTokenHeader = 'OpenShockToken';
+  /// Name of the session cookie the API sets on a successful login. It matches
+  /// the `UserSessionCookie` security scheme in the OpenAPI document.
+  static const String sessionCookieName = 'openShockSession';
+
+  static const _cookieStorageKey = 'session_cookies';
   static const _tag = 'ApiClient';
 
+  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
+
   late Dio _dio;
+  late CookieJar _cookieJar;
 
   String _baseUrl;
   bool _initialized = false;
 
-  /// Held separately from the Dio instance because [setBaseUrl] rebuilds Dio,
-  /// which would otherwise silently drop the auth header.
-  String? _apiToken;
-
-  /// Shared instance.
-  ///
-  /// The API token lives in memory on this object, so every caller has to talk
-  /// to the same one. This used to not matter: authentication rode on cookies
-  /// that each new instance reloaded from secure storage, so a second
-  /// `ApiClient()` was still signed in. A second instance now would simply have
-  /// no token and get 401 on everything.
+  /// Shared instance, so every caller sees the same session.
   static final ApiClient _shared = ApiClient._internal();
 
   factory ApiClient() => _shared;
@@ -40,12 +44,18 @@ class ApiClient {
 
   String get baseUrl => _baseUrl;
 
+  Future<CookieJar> get cookieJar async {
+    await _ensureInitialized();
+    return _cookieJar;
+  }
+
   Future<void> setBaseUrl(String baseUrl) async {
     _baseUrl = baseUrl;
 
     // If already initialized, we need to reinitialize Dio with the new base URL
     if (_initialized) {
       _initializeDio();
+      await _loadCookiesFromSecureStorage();
     } else {
       await _ensureInitialized();
     }
@@ -54,7 +64,9 @@ class ApiClient {
   Future<void> _ensureInitialized() async {
     if (_initialized) return;
 
+    _cookieJar = CookieJar();
     _initializeDio();
+    await _loadCookiesFromSecureStorage();
     _initialized = true;
   }
 
@@ -69,43 +81,231 @@ class ApiClient {
       ),
     );
 
-    // Re-attach the token, since this may be a rebuild after a host change.
-    _applyApiToken();
+    // The cookie manager carries the session cookie on every request.
+    _dio.interceptors.add(CookieManager(_cookieJar));
   }
 
   // -------------------------
-  // Authentication
+  // Cookies (secure storage)
   // -------------------------
 
-  /// Attach (or clear) the API token sent on every request.
-  ///
-  /// The header name comes from the `ApiToken` security scheme in the OpenAPI
-  /// document (`OpenShockToken`). Note the developer wiki spells it
-  /// `Open-Shock-Token`, which the server does not recognise - the spec wins.
-  Future<void> setApiToken(String? token) async {
-    _apiToken = (token == null || token.isEmpty) ? null : token;
-    await _ensureInitialized();
-    _applyApiToken();
+  Future<void> _loadCookiesFromSecureStorage() async {
+    try {
+      final cookiesJson = await _secureStorage.read(key: _cookieStorageKey);
+      if (cookiesJson == null || cookiesJson.isEmpty) return;
 
-    Logger.log(
-      _apiToken == null ? 'Cleared API token' : 'API token attached',
-      tag: _tag,
-    );
-  }
+      final decoded = jsonDecode(cookiesJson);
+      if (decoded is! List) return;
 
-  String? get apiToken => _apiToken;
+      final uri = Uri.parse(_baseUrl);
+      final cookies = decoded
+          .whereType<Map<String, dynamic>>()
+          .map(_cookieFromJson)
+          .toList();
 
-  void _applyApiToken() {
-    if (_apiToken == null) {
-      _dio.options.headers.remove(_apiTokenHeader);
-      return;
+      await _cookieJar.saveFromResponse(uri, cookies);
+      Logger.log('Loaded ${cookies.length} cookies from storage', tag: _tag);
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Failed to load cookies',
+        tag: _tag,
+        error: e,
+        stackTrace: stackTrace,
+      );
     }
-    _dio.options.headers[_apiTokenHeader] = _apiToken;
+  }
+
+  Future<void> _saveCookiesToSecureStorage() async {
+    try {
+      final uri = Uri.parse(_baseUrl);
+      final cookies = await _cookieJar.loadForRequest(uri);
+
+      if (cookies.isEmpty) {
+        await _secureStorage.delete(key: _cookieStorageKey);
+        return;
+      }
+
+      await _secureStorage.write(
+        key: _cookieStorageKey,
+        value: jsonEncode(cookies.map(_cookieToJson).toList()),
+      );
+      Logger.log('Saved ${cookies.length} cookies to storage', tag: _tag);
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Failed to save cookies',
+        tag: _tag,
+        error: e,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Cookie _cookieFromJson(Map<String, dynamic> json) {
+    return Cookie(json['name'] as String? ?? '', json['value'] as String? ?? '')
+      ..domain = json['domain'] as String?
+      ..path = json['path'] as String?
+      ..expires = (json['expires'] is String)
+          ? DateTime.tryParse(json['expires'] as String)
+          : null
+      ..secure = json['secure'] as bool? ?? false
+      ..httpOnly = json['httpOnly'] as bool? ?? false;
+  }
+
+  Map<String, dynamic> _cookieToJson(Cookie cookie) => {
+    'name': cookie.name,
+    'value': cookie.value,
+    'domain': cookie.domain,
+    'path': cookie.path,
+    'expires': cookie.expires?.toIso8601String(),
+    'secure': cookie.secure,
+    'httpOnly': cookie.httpOnly,
+  };
+
+  /// Value of the session cookie, used to authenticate the SignalR hub.
+  Future<String?> getSessionKey() async {
+    await _ensureInitialized();
+
+    try {
+      final cookies = await _cookieJar.loadForRequest(Uri.parse(_baseUrl));
+      for (final cookie in cookies) {
+        if (cookie.name == sessionCookieName && cookie.value.isNotEmpty) {
+          return cookie.value;
+        }
+      }
+      return null;
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Failed to read session key',
+        tag: _tag,
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return null;
+    }
   }
 
   // -------------------------
   // API calls
   // -------------------------
+
+  /// `GET /1` - unauthenticated metadata, including the Turnstile site key the
+  /// login screen needs. Fetched at runtime rather than hardcoded so that a
+  /// self-hosted instance supplies its own key, or none when it is disabled.
+  Future<ApiResponse<BackendInfo>> getBackendInfo() async {
+    await _ensureInitialized();
+
+    try {
+      final response = await _dio.get('/1');
+
+      if (response.statusCode == 200) {
+        final data = _extractData(response.data);
+        if (data == null) {
+          return ApiResponse.error('Unexpected response format');
+        }
+        return ApiResponse.success(BackendInfo.fromJson(data));
+      }
+
+      return ApiResponse.error(
+        _apiMessage(
+          response,
+          fallback: 'Failed to load server info: ${response.statusCode}',
+        ),
+      );
+    } on DioException catch (e) {
+      Logger.error('Backend info DioException', tag: _tag, error: e);
+      return ApiResponse.error(_handleDioError(e));
+    } catch (e, stackTrace) {
+      Logger.error(
+        'Backend info error',
+        tag: _tag,
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return ApiResponse.error('An unexpected error occurred');
+    }
+  }
+
+  /// `POST /2/account/login`. On success the server sets the session cookie,
+  /// which the cookie manager stores and we persist to secure storage.
+  Future<ApiResponse<void>> login(LoginRequest request) async {
+    await _ensureInitialized();
+
+    try {
+      final response = await _dio.post(
+        '/2/account/login',
+        data: request.toJson(),
+      );
+
+      Logger.log('Login response status: ${response.statusCode}', tag: _tag);
+
+      if (response.statusCode == 200) {
+        await _saveCookiesToSecureStorage();
+        return ApiResponse.success(null);
+      }
+
+      if (response.statusCode == 401) {
+        return ApiResponse.error('Invalid username/email or password');
+      }
+
+      // The API distinguishes a failed captcha from a plain rejection through
+      // the `type` field, so say which one it was.
+      if (response.statusCode == 403) {
+        final type = _errorType(response);
+        if (type != null && type.startsWith('Turnstile')) {
+          return ApiResponse.error(
+            'Captcha verification failed. Please try again.',
+          );
+        }
+        return ApiResponse.error(
+          _apiMessage(response, fallback: 'Access forbidden'),
+        );
+      }
+
+      // 410 means this client is calling an endpoint the server has retired.
+      if (response.statusCode == 410) {
+        return ApiResponse.error(
+          _apiMessage(
+            response,
+            fallback: 'This app is out of date and must be updated.',
+          ),
+        );
+      }
+
+      return ApiResponse.error(
+        _apiMessage(response, fallback: 'Login failed: ${response.statusCode}'),
+      );
+    } on DioException catch (e) {
+      Logger.error('Login DioException', tag: _tag, error: e);
+      return ApiResponse.error(_handleDioError(e));
+    } catch (e, stackTrace) {
+      Logger.error('Login error', tag: _tag, error: e, stackTrace: stackTrace);
+      return ApiResponse.error('An unexpected error occurred: $e');
+    }
+  }
+
+  /// `POST /1/account/logout` - invalidates the session server-side.
+  Future<ApiResponse<void>> logout() async {
+    await _ensureInitialized();
+
+    try {
+      final response = await _dio.post('/1/account/logout');
+      await _cookieJar.deleteAll();
+      await _secureStorage.delete(key: _cookieStorageKey);
+
+      if (response.statusCode == 200) {
+        return ApiResponse.success(null);
+      }
+      return ApiResponse.error(
+        _apiMessage(response, fallback: 'Logout failed: ${response.statusCode}'),
+      );
+    } on DioException catch (e) {
+      // The local session is dropped either way, so a failure is not fatal.
+      await _cookieJar.deleteAll();
+      await _secureStorage.delete(key: _cookieStorageKey);
+      return ApiResponse.error(_handleDioError(e));
+    }
+  }
+
 
   Future<ApiResponse<SelfUser>> getSelf() async {
     await _ensureInitialized();
@@ -323,6 +523,17 @@ class ApiClient {
       }
     }
     return fallback;
+  }
+
+  /// Machine-readable error discriminator, e.g. `Turnstile.Invalid`. Used to
+  /// tell a failed captcha apart from an ordinary rejection, since both are 403.
+  String? _errorType(Response<dynamic> response) {
+    final data = response.data;
+    if (data is Map<String, dynamic>) {
+      final type = data['type'];
+      if (type is String && type.isNotEmpty) return type;
+    }
+    return null;
   }
 
   String _handleDioError(DioException e) {

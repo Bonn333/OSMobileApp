@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/backend_info.dart';
 import '../providers/auth_provider.dart';
 import '../services/api_client.dart';
 import '../services/storage_service.dart';
 import '../utils/logger.dart';
 import '../widgets/custom_snackbar.dart';
+import '../widgets/turnstile_challenge.dart';
 import 'overview_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -18,30 +20,66 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   static const _bgColor = Color(0xFF0A0A0A);
   static const _pagePadding = EdgeInsets.all(24);
-  static const _apiTokensUrl = 'https://openshock.app/settings/api-tokens';
+
+  /// Sent when the instance reports no site key, i.e. Turnstile is disabled.
+  /// The API still requires the field to be present and non-empty. This mirrors
+  /// PUBLIC_TURNSTILE_DEV_BYPASS_VALUE in the official web frontend.
+  static const _turnstileDisabledPlaceholder = 'INVALID';
 
   final _formKey = GlobalKey<FormState>();
-  final _tokenController = TextEditingController();
+  final _identifierController = TextEditingController();
+  final _passwordController = TextEditingController();
   final _customHostController = TextEditingController();
 
   bool _showAdvanced = false;
-  bool _obscureToken = true;
+  bool _obscurePassword = true;
   bool _isLoading = false;
+
+  BackendInfo? _backendInfo;
+  bool _loadingBackendInfo = true;
+  String? _backendInfoError;
+  String? _turnstileToken;
+
+  // Rebuilding the challenge with a fresh key forces a new puzzle.
+  int _turnstileEpoch = 0;
 
   @override
   void initState() {
     super.initState();
-    _loadDefaultHost();
+    _customHostController.text = context.read<AuthProvider>().currentHost;
+    _loadBackendInfo();
   }
 
-  Future<void> _loadDefaultHost() async {
-    final authProvider = context.read<AuthProvider>();
-    _customHostController.text = authProvider.currentHost;
+  /// The Turnstile site key is not hardcoded: it comes from `GET /1`, so a
+  /// self-hosted instance supplies its own, or none when it is switched off.
+  Future<void> _loadBackendInfo() async {
+    setState(() {
+      _loadingBackendInfo = true;
+      _backendInfoError = null;
+      _turnstileToken = null;
+    });
+
+    final response = await ApiClient().getBackendInfo();
+    if (!mounted) return;
+
+    setState(() {
+      _loadingBackendInfo = false;
+      if (response.isSuccess && response.data != null) {
+        _backendInfo = response.data;
+        // Nothing to solve when the server has Turnstile disabled.
+        if (!_backendInfo!.isTurnstileEnabled) {
+          _turnstileToken = _turnstileDisabledPlaceholder;
+        }
+      } else {
+        _backendInfoError = response.error ?? 'Could not reach the server';
+      }
+    });
   }
 
   @override
   void dispose() {
-    _tokenController.dispose();
+    _identifierController.dispose();
+    _passwordController.dispose();
     _customHostController.dispose();
     super.dispose();
   }
@@ -79,14 +117,38 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  bool get _canSubmit => !_isLoading && _turnstileToken != null;
+
+  void _resetTurnstile() {
+    // A Turnstile token is single-use: once the server has seen it, the widget
+    // has to be solved again before another attempt.
+    if (_backendInfo?.isTurnstileEnabled ?? false) {
+      setState(() {
+        _turnstileToken = null;
+        _turnstileEpoch++;
+      });
+    } else {
+      setState(() => _turnstileToken = _turnstileDisabledPlaceholder);
+    }
+  }
+
   Future<void> _handleLogin() async {
     final isValid = _formKey.currentState?.validate() ?? false;
     if (!isValid) return;
 
+    final token = _turnstileToken;
+    if (token == null) {
+      CustomSnackbar.error(
+        context,
+        title: 'Captcha Required',
+        description: 'Please complete the captcha before signing in.',
+      );
+      return;
+    }
+
     Logger.log('Starting sign-in process', tag: 'LoginScreen');
     _setLoading(true);
 
-    // Show loading snackbar
     CustomSnackbar.loading(
       context,
       title: 'Signing In',
@@ -96,7 +158,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
     final authProvider = context.read<AuthProvider>();
 
-    // Update custom host if advanced settings are shown and URL is provided
     if (_showAdvanced && _customHostController.text.trim().isNotEmpty) {
       final customUrl = _customHostController.text.trim();
       if (customUrl != authProvider.currentHost) {
@@ -105,19 +166,19 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     }
 
-    final success = await authProvider.loginWithToken(_tokenController.text);
+    final success = await authProvider.loginWithCredentials(
+      _identifierController.text,
+      _passwordController.text,
+      turnstileResponse: token,
+    );
 
     _setLoading(false);
     if (!mounted) return;
 
-    // Dismiss loading snackbar
     CustomSnackbar.dismiss('login');
 
     if (success) {
-      Logger.log(
-        'Sign-in successful, navigating to overview',
-        tag: 'LoginScreen',
-      );
+      Logger.log('Sign-in successful, navigating to overview', tag: 'LoginScreen');
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const OverviewScreen()),
         (route) => false,
@@ -125,11 +186,13 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
+    _resetTurnstile();
+
     Logger.error('Sign-in failed, showing error to user', tag: 'LoginScreen');
     CustomSnackbar.error(
       context,
       title: 'Sign In Failed',
-      description: authProvider.error ?? 'Please check your API token',
+      description: authProvider.error ?? 'Please check your credentials',
     );
   }
 
@@ -138,6 +201,63 @@ class _LoginScreenState extends State<LoginScreen> {
     await StorageService().setOnboardingComplete(false);
     if (!mounted) return;
     Navigator.of(context).pop();
+  }
+
+  Widget _buildTurnstileSection() {
+    if (_loadingBackendInfo) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          child: SizedBox(
+            height: 20,
+            width: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+
+    if (_backendInfoError != null) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.red.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.redAccent),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                _backendInfoError!,
+                style: TextStyle(color: Colors.red.shade100, fontSize: 12),
+              ),
+            ),
+            TextButton(onPressed: _loadBackendInfo, child: const Text('Retry')),
+          ],
+        ),
+      );
+    }
+
+    final info = _backendInfo;
+    if (info == null || !info.isTurnstileEnabled) {
+      // Turnstile is disabled on this instance; nothing for the user to solve.
+      return const SizedBox.shrink();
+    }
+
+    return TurnstileChallenge(
+      key: ValueKey(_turnstileEpoch),
+      siteKey: info.turnstileSiteKey!,
+      // Turnstile checks the hostname rendering the widget against the domains
+      // registered for the site key, so use the instance's own frontend origin.
+      baseUrl: info.frontendUrl ?? ApiClient().baseUrl,
+      onToken: (token) {
+        if (!mounted) return;
+        setState(() => _turnstileToken = token);
+      },
+    );
   }
 
   @override
@@ -190,96 +310,63 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Sign in with an OpenShock API token',
+                    'Enter your credentials to continue',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.white70, fontSize: 14),
                   ),
                   const SizedBox(height: 40),
 
-                  // API token
+                  // Username or email
                   TextFormField(
-                    controller: _tokenController,
+                    controller: _identifierController,
                     style: const TextStyle(color: Colors.white),
-                    obscureText: _obscureToken,
+                    keyboardType: TextInputType.emailAddress,
                     autocorrect: false,
                     enableSuggestions: false,
                     decoration: _inputDecoration(
-                      labelText: 'API Token',
-                      prefixIcon: Icons.key,
+                      labelText: 'Username or Email',
+                      prefixIcon: Icons.person,
+                    ),
+                    validator: (value) {
+                      if ((value ?? '').trim().isEmpty) {
+                        return 'Please enter your username or email';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Password
+                  TextFormField(
+                    controller: _passwordController,
+                    style: const TextStyle(color: Colors.white),
+                    obscureText: _obscurePassword,
+                    decoration: _inputDecoration(
+                      labelText: 'Password',
+                      prefixIcon: Icons.lock,
                       suffixIcon: IconButton(
                         icon: Icon(
-                          _obscureToken
+                          _obscurePassword
                               ? Icons.visibility
                               : Icons.visibility_off,
                           color: Colors.white70,
                         ),
-                        onPressed: () =>
-                            setState(() => _obscureToken = !_obscureToken),
+                        onPressed: () => setState(
+                          () => _obscurePassword = !_obscurePassword,
+                        ),
                       ),
                     ),
                     validator: (value) {
-                      if ((value ?? '').trim().isEmpty) {
-                        return 'Please enter your API token';
+                      if ((value ?? '').isEmpty) {
+                        return 'Please enter your password';
                       }
                       return null;
                     },
                   ),
                   const SizedBox(height: 20),
 
-                  // Where to get a token
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: Colors.blue.withValues(alpha: 0.3),
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.info_outline,
-                              color: Colors.white70,
-                              size: 20,
-                            ),
-                            const SizedBox(width: 8),
-                            const Expanded(
-                              child: Text(
-                                'Where do I get a token?',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Create one under Settings → API Tokens on the '
-                          'OpenShock website, then paste it above.',
-                          style: TextStyle(
-                            color: Colors.blue.shade100,
-                            fontSize: 12,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        SelectableText(
-                          _apiTokensUrl,
-                          style: TextStyle(
-                            color: Colors.blue.shade200,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
+                  _buildTurnstileSection(),
+                  const SizedBox(height: 8),
 
                   // Advanced Settings toggle
                   TextButton(
@@ -326,12 +413,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
                   const SizedBox(height: 24),
 
-                  // Sign in button
                   ElevatedButton(
-                    onPressed: _isLoading ? null : _handleLogin,
+                    onPressed: _canSubmit ? _handleLogin : null,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.white,
                       foregroundColor: Colors.black,
+                      disabledBackgroundColor: Colors.white24,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
