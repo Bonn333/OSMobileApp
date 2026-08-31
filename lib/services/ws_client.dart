@@ -20,11 +20,9 @@ class OpenShockHubEvent {
 class OpenShockClient {
   final String apiHost;
 
-  /// API token used to authenticate the hub connection. The REST API accepts
-  /// this as the `OpenShockToken` header (the `ApiToken` security scheme), and
-  /// the SignalR hub is authenticated the same way now that the app no longer
-  /// holds a session cookie.
-  final String apiToken;
+  /// Value of the `openShockSession` cookie. The hub is authenticated with the
+  /// session rather than an API token, matching the cookie-based login flow.
+  final String sessionKey;
 
   final Dio dio;
   HubConnection? _connection;
@@ -41,7 +39,7 @@ class OpenShockClient {
   /// Provide your own Dio if you want (custom timeouts, proxy, etc.)
   OpenShockClient({
     required this.apiHost,
-    required this.apiToken,
+    required this.sessionKey,
     Dio? dio,
     required String userAgent,
   }) : dio =
@@ -51,14 +49,14 @@ class OpenShockClient {
                // Make sure baseUrl doesn't double-slash with apiHost usage
                baseUrl: apiHost,
                headers: {
-                 'OpenShockToken': apiToken,
+                 'OpenShockSession': sessionKey,
                  'User-Agent': userAgent,
                },
              ),
            ) {
     // Ensure headers always exist (even if caller provided Dio)
     this.dio.options.headers.addAll({
-      'OpenShockToken': apiToken,
+      'OpenShockSession': sessionKey,
       'User-Agent': userAgent,
     });
   }
@@ -67,7 +65,7 @@ class OpenShockClient {
   Future<void> start() async {
     try {
       final httpClient = _OpenShockHttpClient(
-        apiToken: apiToken,
+        sessionKey: sessionKey,
         userAgent:
             dio.options.headers['User-Agent'] as String? ??
             'OpenShockMobile/1.0.0',
@@ -216,15 +214,15 @@ class OpenShockClient {
 /// Custom HTTP client that adds OpenShock headers to all requests
 class _OpenShockHttpClient extends http.BaseClient {
   final http.Client _httpClient = http.Client();
-  final String apiToken;
+  final String sessionKey;
   final String userAgent;
 
-  _OpenShockHttpClient({required this.apiToken, required this.userAgent});
+  _OpenShockHttpClient({required this.sessionKey, required this.userAgent});
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) {
     request.headers.addAll({
-      'OpenShockToken': apiToken,
+      'OpenShockSession': sessionKey,
       'User-Agent': userAgent,
     });
     return _httpClient.send(request);
