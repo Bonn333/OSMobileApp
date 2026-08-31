@@ -48,28 +48,44 @@ jobs:
       - name: Test
         run: flutter test
 
-      - name: Configure signing key
+      # A tagged build produces the artifacts published to the release page, so
+      # refuse to build one with the throwaway debug key rather than shipping a
+      # release nobody can upgrade and Play will not accept.
+      - name: Require a release key for tagged builds
+        if: startsWith(github.ref, 'refs/tags/v') && env.ANDROID_KEYSTORE_BASE64 == ''
+        run: |
+          echo "::error::This is a tagged release build but ANDROID_KEYSTORE_BASE64" \
+               "is not set. Add the release signing secrets before tagging."
+          exit 1
+
+      - name: Configure release signing key
         if: env.ANDROID_KEYSTORE_BASE64 != ''
         run: |
           set -euo pipefail
           # `base64 -d` fails loudly on a malformed secret rather than writing a
           # truncated keystore that only breaks later during the build.
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/keystore.jks
+          # A PKCS12 keystore - keytool's default since Java 9 - cannot hold a
+          # key password that differs from the store password; keytool ignores
+          # -keypass with a warning. Supplying a different one here fails the
+          # build with "Given final block not properly padded", so default the
+          # key password to the store password unless one is explicitly set.
           # storeFile is resolved relative to the app module directory.
           {
             echo "storeFile=keystore.jks"
             echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
             echo "keyAlias=$ANDROID_KEY_ALIAS"
-            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+            echo "keyPassword=${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
           } > android/key.properties
-          echo "Signing configured with the supplied keystore."
+          echo "Signing configured with the supplied release keystore."
 
-      - name: Warn when no signing key is configured
+      - name: Warn when no release key is configured
         if: env.ANDROID_KEYSTORE_BASE64 == ''
         run: |
           echo "::warning::ANDROID_KEYSTORE_BASE64 is not set - building with an" \
                "ephemeral debug key. The signature changes every run, so this" \
-               "build will not install over a previous one."
+               "build will not install over a previous one and is not" \
+               "distributable. Expected for fork pull requests."
 
       - name: Build APK
         run: flutter build apk --release
@@ -230,9 +246,10 @@ jobs:
           body: |
             Builds from `${{ github.sha }}`.
 
-            The `.apk` is signed with the project's debug key. It installs
-            directly, but a debug key is not accepted by Google Play and its
-            password is public, so treat it as a convenience for testing only.
+            The `.apk` and `.aab` are signed with the project's release key and
+            install directly. Android will refuse to install over a copy signed
+            with a different key, so uninstall any earlier debug-signed build
+            first.
 
             The `.ipa` is **unsigned** and cannot be installed on a stock iPhone
             as-is. Sign it first with Sideloadly, AltStore, or your own
