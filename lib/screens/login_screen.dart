@@ -6,6 +6,7 @@ import '../models/backend_info.dart';
 import '../providers/auth_provider.dart';
 import '../services/api_client.dart';
 import '../utils/logger.dart';
+import '../utils/validators.dart';
 import '../widgets/custom_snackbar.dart';
 import 'overview_screen.dart';
 
@@ -22,9 +23,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
   /// Sent when Turnstile is disabled; the API still requires a non-empty value.
   static const _turnstileDisabledPlaceholder = 'INVALID';
-
-  static final _emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
-  static final _usernamePattern = RegExp(r'^[A-Za-z0-9._-]{3,32}$');
 
   final _formKey = GlobalKey<FormState>();
   final _identifierController = TextEditingController();
@@ -135,19 +133,6 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!mounted) return;
 
     await _loadBackendInfo();
-  }
-
-  String? _validateIdentifier(String? value) {
-    final v = (value ?? '').trim();
-    if (v.isEmpty) return 'Please enter your username or email';
-
-    if (v.contains('@')) {
-      return _emailPattern.hasMatch(v) ? null : 'Enter a valid email address';
-    }
-
-    return _usernamePattern.hasMatch(v)
-        ? null
-        : 'Usernames are 3-32 characters: letters, numbers, . _ -';
   }
 
   /// Tokens are single-use, so a failed attempt needs a new one.
@@ -352,7 +337,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     labelText: 'Username or Email',
                     prefixIcon: Icons.person,
                   ),
-                  validator: _validateIdentifier,
+                  validator: validateUsernameOrEmail,
                 ),
                 const SizedBox(height: 16),
 
@@ -375,12 +360,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           setState(() => _obscurePassword = !_obscurePassword),
                     ),
                   ),
-                  validator: (value) {
-                    if ((value ?? '').isEmpty) {
-                      return 'Please enter your password';
-                    }
-                    return null;
-                  },
+                  validator: validatePassword,
                 ),
                 const SizedBox(height: 20),
 

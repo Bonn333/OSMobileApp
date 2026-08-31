@@ -15,7 +15,6 @@ jobs:
   android:
     name: Build Android
     runs-on: ubuntu-latest
-    # Secrets can't be used in a step-level `if:`, so expose them as env vars.
     env:
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -58,8 +57,6 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/keystore.jks
-          # PKCS12 can't hold a key password that differs from the store
-          # password, so default it. storeFile is relative to the app module.
           {
             echo "storeFile=keystore.jks"
             echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
@@ -72,9 +69,7 @@ jobs:
         if: env.ANDROID_KEYSTORE_BASE64 == ''
         run: |
           echo "::warning::ANDROID_KEYSTORE_BASE64 is not set - building with an" \
-               "ephemeral debug key. The signature changes every run, so this" \
-               "build will not install over a previous one and is not" \
-               "distributable. Expected for fork pull requests."
+               "debug key."
 
       - name: Build APK
         run: flutter build apk --release
@@ -186,8 +181,6 @@ jobs:
           path: build/ios/iphoneos/openshock_mobile-${{ env.VERSION }}.ipa
           if-no-files-found: error
 
-  # Publishes raw files, unlike Actions artifacts which are zipped and
-  # require login to download.
   release:
     name: Publish release assets
     needs: [android, ios]
@@ -218,10 +211,3 @@ jobs:
           fail_on_unmatched_files: true
           body: |
             Build `${{ github.sha }}`.
-
-            **Android** - install the `.apk` directly. The `.aab` is for Google
-            Play. If an older build is installed with a different signing key,
-            uninstall it first.
-
-            **iOS** - the `.ipa` is not signed. Sign it with Sideloadly or
-            AltStore before installing.
