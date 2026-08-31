@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../models/control_type.dart';
 import '../../models/shared_shocker.dart';
 import '../../models/device_with_shockers.dart';
 import '../../services/ws_client.dart';
@@ -24,11 +25,6 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
   double _intensity = 50;
   double _duration = 1000; // milliseconds
   bool _isSending = false;
-
-  // Control action types
-  static const int actionShock = 0;
-  static const int actionVibrate = 1;
-  static const int actionSound = 2;
 
   int get maxIntensity {
     if (widget.shocker is SharedShocker) {
@@ -60,24 +56,24 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
     return true;
   }
 
-  bool canUseAction(int action) {
+  bool canUseAction(ControlType action) {
     if (widget.shocker is SharedShocker) {
       final permissions = (widget.shocker as SharedShocker).permissions;
       switch (action) {
-        case actionShock:
+        case ControlType.shock:
           return permissions.shock;
-        case actionVibrate:
+        case ControlType.vibrate:
           return permissions.vibrate;
-        case actionSound:
+        case ControlType.sound:
           return permissions.sound;
-        default:
-          return false;
+        case ControlType.stop:
+          return true;
       }
     }
     return true; // Own shockers can use all actions
   }
 
-  Future<void> _sendControl(int action, String actionName) async {
+  Future<void> _sendControl(ControlType action, String actionName) async {
     if (!canControl || !canUseAction(action)) return;
 
     setState(() => _isSending = true);
@@ -327,9 +323,9 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                         label: 'Shock',
                         icon: Icons.bolt,
                         color: Colors.red,
-                        enabled: canControl && canUseAction(actionShock),
+                        enabled: canControl && canUseAction(ControlType.shock),
                         isSending: _isSending,
-                        onPressed: () => _sendControl(actionShock, 'Shock'),
+                        onPressed: () => _sendControl(ControlType.shock, 'Shock'),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -338,9 +334,9 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                         label: 'Vibrate',
                         icon: Icons.vibration,
                         color: Colors.purple,
-                        enabled: canControl && canUseAction(actionVibrate),
+                        enabled: canControl && canUseAction(ControlType.vibrate),
                         isSending: _isSending,
-                        onPressed: () => _sendControl(actionVibrate, 'Vibrate'),
+                        onPressed: () => _sendControl(ControlType.vibrate, 'Vibrate'),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -349,9 +345,9 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                         label: 'Sound',
                         icon: Icons.volume_up,
                         color: Colors.orange,
-                        enabled: canControl && canUseAction(actionSound),
+                        enabled: canControl && canUseAction(ControlType.sound),
                         isSending: _isSending,
-                        onPressed: () => _sendControl(actionSound, 'Sound'),
+                        onPressed: () => _sendControl(ControlType.sound, 'Sound'),
                       ),
                     ),
                   ],
