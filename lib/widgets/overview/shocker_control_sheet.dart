@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../models/control_type.dart';
 import '../../models/shared_shocker.dart';
 import '../../models/device_with_shockers.dart';
+import '../../services/live_control_client.dart';
 import '../../services/ws_client.dart';
 import '../../utils/logger.dart';
 
@@ -25,6 +28,98 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
   double _intensity = 50;
   double _duration = 1000; // milliseconds
   bool _isSending = false;
+
+  LiveControlClient? _live;
+  LiveConnectionState _liveState = LiveConnectionState.disconnected;
+  int _liveLatency = 0;
+  ControlType? _heldAction;
+  final List<StreamSubscription<dynamic>> _liveSubscriptions = [];
+
+  bool get _isLive => _liveState == LiveConnectionState.connected;
+
+  String? get _hubId => widget.device?.id;
+
+  @override
+  void dispose() {
+    for (final subscription in _liveSubscriptions) {
+      subscription.cancel();
+    }
+    _live?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _toggleLive() async {
+    if (_live != null) {
+      await _stopLive();
+      return;
+    }
+
+    final hubId = _hubId;
+    if (hubId == null) {
+      _showMessage('This shocker has no hub to control live', isError: true);
+      return;
+    }
+
+    final client = LiveControlClient(hubId: hubId);
+    _live = client;
+
+    _liveSubscriptions.addAll([
+      client.states.listen((state) {
+        if (!mounted) return;
+        setState(() => _liveState = state);
+      }),
+      client.latency.listen((value) {
+        if (!mounted) return;
+        setState(() => _liveLatency = value);
+      }),
+      client.errors.listen((message) {
+        if (!mounted) return;
+        _showMessage(message, isError: true);
+      }),
+    ]);
+
+    await client.connect();
+  }
+
+  Future<void> _stopLive() async {
+    final client = _live;
+    _live = null;
+    for (final subscription in _liveSubscriptions) {
+      await subscription.cancel();
+    }
+    _liveSubscriptions.clear();
+    await client?.dispose();
+
+    if (!mounted) return;
+    setState(() {
+      _liveState = LiveConnectionState.disconnected;
+      _liveLatency = 0;
+      _heldAction = null;
+    });
+  }
+
+  void _holdLive(ControlType action) {
+    if (!_isLive || !canUseAction(action)) return;
+    setState(() => _heldAction = action);
+    _live?.hold(widget.shocker.id as String, action, _intensity.toInt());
+  }
+
+  void _releaseLive() {
+    if (_heldAction == null) return;
+    _live?.release(widget.shocker.id as String);
+    setState(() => _heldAction = null);
+  }
+
+  void _showMessage(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red : Colors.green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
 
   int get maxIntensity {
     if (widget.shocker is SharedShocker) {
@@ -115,12 +210,74 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
         }
       }
     } catch (e) {
-      Logger.error('Error sending $actionName', tag: 'ShockerControl', error: e);
+      Logger.error(
+        'Error sending $actionName',
+        tag: 'ShockerControl',
+        error: e,
+      );
     } finally {
       if (mounted) {
         setState(() => _isSending = false);
       }
     }
+  }
+
+  Widget _buildLiveBar(bool canControl) {
+    final connecting = _liveState == LiveConnectionState.connecting;
+
+    final Color accent = _isLive ? Colors.green : Colors.white70;
+    final String status = switch (_liveState) {
+      LiveConnectionState.connected => 'Live - hold a button to control',
+      LiveConnectionState.connecting => 'Connecting to gateway...',
+      LiveConnectionState.disconnected => 'Live control is off',
+    };
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: accent.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            _isLive ? Icons.bolt : Icons.bolt_outlined,
+            color: accent,
+            size: 20,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(status, style: TextStyle(color: accent, fontSize: 12)),
+                if (_isLive && _liveLatency > 0)
+                  Text(
+                    '${_liveLatency}ms',
+                    style: TextStyle(
+                      color: Colors.green.shade200,
+                      fontSize: 11,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (connecting)
+            const SizedBox(
+              height: 16,
+              width: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            Switch(
+              value: _isLive,
+              onChanged: canControl ? (_) => _toggleLive() : null,
+              activeThumbColor: Colors.green,
+            ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -274,7 +431,9 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                       child: SliderTheme(
                         data: SliderThemeData(
                           activeTrackColor: Colors.blue,
-                          inactiveTrackColor: Colors.blue.withValues(alpha: 0.3),
+                          inactiveTrackColor: Colors.blue.withValues(
+                            alpha: 0.3,
+                          ),
                           thumbColor: Colors.blue,
                           overlayColor: Colors.blue.withValues(alpha: 0.2),
                           trackHeight: 4,
@@ -313,7 +472,11 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                   ],
                 ),
 
-                const SizedBox(height: 32),
+                const SizedBox(height: 24),
+
+                _buildLiveBar(canControl),
+
+                const SizedBox(height: 16),
 
                 // Action buttons
                 Row(
@@ -325,7 +488,12 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                         color: Colors.red,
                         enabled: canControl && canUseAction(ControlType.shock),
                         isSending: _isSending,
-                        onPressed: () => _sendControl(ControlType.shock, 'Shock'),
+                        isLive: _isLive,
+                        isHeld: _heldAction == ControlType.shock,
+                        onPressed: () =>
+                            _sendControl(ControlType.shock, 'Shock'),
+                        onHoldStart: () => _holdLive(ControlType.shock),
+                        onHoldEnd: _releaseLive,
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -334,9 +502,15 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                         label: 'Vibrate',
                         icon: Icons.vibration,
                         color: Colors.purple,
-                        enabled: canControl && canUseAction(ControlType.vibrate),
+                        enabled:
+                            canControl && canUseAction(ControlType.vibrate),
                         isSending: _isSending,
-                        onPressed: () => _sendControl(ControlType.vibrate, 'Vibrate'),
+                        isLive: _isLive,
+                        isHeld: _heldAction == ControlType.vibrate,
+                        onPressed: () =>
+                            _sendControl(ControlType.vibrate, 'Vibrate'),
+                        onHoldStart: () => _holdLive(ControlType.vibrate),
+                        onHoldEnd: _releaseLive,
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -347,7 +521,12 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                         color: Colors.orange,
                         enabled: canControl && canUseAction(ControlType.sound),
                         isSending: _isSending,
-                        onPressed: () => _sendControl(ControlType.sound, 'Sound'),
+                        isLive: _isLive,
+                        isHeld: _heldAction == ControlType.sound,
+                        onPressed: () =>
+                            _sendControl(ControlType.sound, 'Sound'),
+                        onHoldStart: () => _holdLive(ControlType.sound),
+                        onHoldEnd: _releaseLive,
                       ),
                     ),
                   ],
@@ -401,7 +580,11 @@ class _ControlButton extends StatelessWidget {
   final Color color;
   final bool enabled;
   final bool isSending;
+  final bool isLive;
+  final bool isHeld;
   final VoidCallback onPressed;
+  final VoidCallback? onHoldStart;
+  final VoidCallback? onHoldEnd;
 
   const _ControlButton({
     required this.label,
@@ -410,14 +593,34 @@ class _ControlButton extends StatelessWidget {
     required this.enabled,
     required this.isSending,
     required this.onPressed,
+    this.isLive = false,
+    this.isHeld = false,
+    this.onHoldStart,
+    this.onHoldEnd,
   });
 
   @override
   Widget build(BuildContext context) {
+    final button = _buildButton(context);
+
+    if (!isLive || !enabled) return button;
+
+    // Live control runs for as long as the button is held.
+    return Listener(
+      onPointerDown: (_) => onHoldStart?.call(),
+      onPointerUp: (_) => onHoldEnd?.call(),
+      onPointerCancel: (_) => onHoldEnd?.call(),
+      child: button,
+    );
+  }
+
+  Widget _buildButton(BuildContext context) {
     return ElevatedButton(
-      onPressed: enabled && !isSending ? onPressed : null,
+      onPressed: isLive ? () {} : (enabled && !isSending ? onPressed : null),
       style: ElevatedButton.styleFrom(
-        backgroundColor: enabled ? color.withValues(alpha: 0.2) : Colors.grey.withValues(alpha: 0.1),
+        backgroundColor: enabled
+            ? color.withValues(alpha: isHeld ? 0.5 : 0.2)
+            : Colors.grey.withValues(alpha: 0.1),
         foregroundColor: enabled ? color : Colors.grey,
         disabledBackgroundColor: Colors.grey.withValues(alpha: 0.1),
         disabledForegroundColor: Colors.grey,
@@ -425,7 +628,9 @@ class _ControlButton extends StatelessWidget {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
           side: BorderSide(
-            color: enabled ? color.withValues(alpha: 0.5) : Colors.grey.withValues(alpha: 0.3),
+            color: enabled
+                ? color.withValues(alpha: 0.5)
+                : Colors.grey.withValues(alpha: 0.3),
             width: 1,
           ),
         ),
@@ -437,10 +642,7 @@ class _ControlButton extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             label,
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
           ),
         ],
       ),

@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/backend_info.dart';
 import '../models/device_with_shockers.dart';
+import '../models/lcg_info.dart';
 import '../models/login_request.dart';
 import '../models/self_user.dart';
 import '../models/shared_user.dart';
@@ -214,6 +215,44 @@ class ApiClient {
         error: e,
         stackTrace: stackTrace,
       );
+      return ApiResponse.error('An unexpected error occurred');
+    }
+  }
+
+  /// `GET /2/devices/{deviceId}/lcg` - which live control gateway to use.
+  Future<ApiResponse<LcgInfo>> getLiveControlGateway(String deviceId) async {
+    await _ensureInitialized();
+
+    try {
+      final response = await _dio.get('/2/devices/$deviceId/lcg');
+
+      if (response.statusCode == 200) {
+        final data = _extractData(response.data);
+        if (data == null) {
+          return ApiResponse.error('Unexpected response format');
+        }
+        return ApiResponse.success(LcgInfo.fromJson(data));
+      }
+
+      if (response.statusCode == 401) {
+        return ApiResponse.error('Unauthorized - please login again');
+      }
+
+      if (response.statusCode == 404) {
+        return ApiResponse.error('Hub is not online');
+      }
+
+      return ApiResponse.error(
+        _apiMessage(
+          response,
+          fallback: 'Failed to reach the gateway: ${response.statusCode}',
+        ),
+      );
+    } on DioException catch (e) {
+      Logger.error('LCG DioException', tag: _tag, error: e);
+      return ApiResponse.error(_handleDioError(e));
+    } catch (e, stackTrace) {
+      Logger.error('LCG error', tag: _tag, error: e, stackTrace: stackTrace);
       return ApiResponse.error('An unexpected error occurred');
     }
   }
