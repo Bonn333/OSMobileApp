@@ -226,32 +226,6 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
     }
   }
 
-  Widget _buildLiveActionSelector() {
-    const actions = [
-      (ControlType.sound, Icons.volume_up, 'Sound'),
-      (ControlType.vibrate, Icons.waves, 'Vibrate'),
-      (ControlType.shock, Icons.bolt, 'Shock'),
-    ];
-
-    return Row(
-      children: [
-        for (final (action, icon, label) in actions) ...[
-          Expanded(
-            child: _LiveActionTab(
-              icon: icon,
-              label: label,
-              color: _colorFor(action),
-              selected: _liveAction == action,
-              enabled: canUseAction(action),
-              onTap: () => setState(() => _liveAction = action),
-            ),
-          ),
-          if (action != ControlType.shock) const SizedBox(width: 8),
-        ],
-      ],
-    );
-  }
-
   Widget _buildLiveBar(bool canControl) {
     final connecting = _liveState == LiveConnectionState.connecting;
 
@@ -399,138 +373,128 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Intensity slider
-                  const Text(
-                    'Intensity',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
+                  if (!_isLive) ...[
+                    // Intensity slider
+                    const Text(
+                      'Intensity',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: SliderTheme(
-                          data: SliderThemeData(
-                            activeTrackColor: Colors.red,
-                            inactiveTrackColor: Colors.red.withValues(
-                              alpha: 0.3,
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SliderTheme(
+                            data: SliderThemeData(
+                              activeTrackColor: Colors.red,
+                              inactiveTrackColor: Colors.red.withValues(
+                                alpha: 0.3,
+                              ),
+                              thumbColor: Colors.red,
+                              overlayColor: Colors.red.withValues(alpha: 0.2),
+                              trackHeight: 4,
                             ),
-                            thumbColor: Colors.red,
-                            overlayColor: Colors.red.withValues(alpha: 0.2),
-                            trackHeight: 4,
-                          ),
-                          child: Slider(
-                            value: _intensity,
-                            min: 0,
-                            max: maxIntensity.toDouble(),
-                            divisions: maxIntensity,
-                            onChanged: canControl
-                                ? (value) => setState(() => _intensity = value)
-                                : null,
+                            child: Slider(
+                              value: _intensity,
+                              min: 0,
+                              max: maxIntensity.toDouble(),
+                              divisions: maxIntensity,
+                              onChanged: canControl
+                                  ? (value) =>
+                                        setState(() => _intensity = value)
+                                  : null,
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Container(
-                        width: 60,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          '${_intensity.toInt()}%',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
+                        const SizedBox(width: 12),
+                        Container(
+                          width: 60,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '${_intensity.toInt()}%',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  // Duration slider
-                  const Text(
-                    'Duration',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: SliderTheme(
-                          data: SliderThemeData(
-                            activeTrackColor: Colors.blue,
-                            inactiveTrackColor: Colors.blue.withValues(
-                              alpha: 0.3,
+
+                    const SizedBox(height: 24),
+
+                    // Duration slider
+                    const Text(
+                      'Duration',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SliderTheme(
+                            data: SliderThemeData(
+                              activeTrackColor: Colors.blue,
+                              inactiveTrackColor: Colors.blue.withValues(
+                                alpha: 0.3,
+                              ),
+                              thumbColor: Colors.blue,
+                              overlayColor: Colors.blue.withValues(alpha: 0.2),
+                              trackHeight: 4,
                             ),
-                            thumbColor: Colors.blue,
-                            overlayColor: Colors.blue.withValues(alpha: 0.2),
-                            trackHeight: 4,
-                          ),
-                          child: Slider(
-                            value: _duration,
-                            min: 300,
-                            max: maxDuration.toDouble(),
-                            divisions: ((maxDuration - 300) / 100).round(),
-                            onChanged: canControl
-                                ? (value) => setState(() => _duration = value)
-                                : null,
+                            child: Slider(
+                              value: _duration,
+                              min: 300,
+                              max: maxDuration.toDouble(),
+                              divisions: ((maxDuration - 300) / 100).round(),
+                              onChanged: canControl
+                                  ? (value) => setState(() => _duration = value)
+                                  : null,
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Container(
-                        width: 60,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          '${(_duration / 1000).toStringAsFixed(1)}s',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
+                        const SizedBox(width: 12),
+                        Container(
+                          width: 60,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '${(_duration / 1000).toStringAsFixed(1)}s',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
+                  ],
 
                   const SizedBox(height: 24),
 
                   _buildLiveBar(canControl),
-
-                  if (_isLive) ...[
-                    const SizedBox(height: 12),
-                    _buildLiveActionSelector(),
-                    const SizedBox(height: 12),
-                    LiveControlPad(
-                      color: _colorFor(_liveAction),
-                      maxIntensity: maxIntensity,
-                      enabled: _isLive && canUseAction(_liveAction),
-                      onChanged: _onLiveIntensity,
-                      onReleased: _onLiveReleased,
-                    ),
-                  ],
 
                   const SizedBox(height: 16),
 
@@ -545,8 +509,14 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                           enabled:
                               canControl && canUseAction(ControlType.shock),
                           isSending: _isSending,
-                          onPressed: () =>
-                              _sendControl(ControlType.shock, 'Shock'),
+                          selected: _isLive && _liveAction == ControlType.shock,
+                          onPressed: () {
+                            if (_isLive) {
+                              setState(() => _liveAction = ControlType.shock);
+                            } else {
+                              _sendControl(ControlType.shock, 'Shock');
+                            }
+                          },
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -558,8 +528,15 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                           enabled:
                               canControl && canUseAction(ControlType.vibrate),
                           isSending: _isSending,
-                          onPressed: () =>
-                              _sendControl(ControlType.vibrate, 'Vibrate'),
+                          selected:
+                              _isLive && _liveAction == ControlType.vibrate,
+                          onPressed: () {
+                            if (_isLive) {
+                              setState(() => _liveAction = ControlType.vibrate);
+                            } else {
+                              _sendControl(ControlType.vibrate, 'Vibrate');
+                            }
+                          },
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -571,12 +548,30 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                           enabled:
                               canControl && canUseAction(ControlType.sound),
                           isSending: _isSending,
-                          onPressed: () =>
-                              _sendControl(ControlType.sound, 'Sound'),
+                          selected: _isLive && _liveAction == ControlType.sound,
+                          onPressed: () {
+                            if (_isLive) {
+                              setState(() => _liveAction = ControlType.sound);
+                            } else {
+                              _sendControl(ControlType.sound, 'Sound');
+                            }
+                          },
                         ),
                       ),
                     ],
                   ),
+
+                  if (_isLive) ...[
+                    const SizedBox(height: 16),
+                    LiveControlPad(
+                      color: _colorFor(_liveAction),
+                      maxIntensity: maxIntensity,
+                      enabled: canUseAction(_liveAction),
+                      height: 280,
+                      onChanged: _onLiveIntensity,
+                      onReleased: _onLiveReleased,
+                    ),
+                  ],
 
                   if (!canControl) ...[
                     const SizedBox(height: 16),
@@ -621,79 +616,13 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
   }
 }
 
-class _LiveActionTab extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color color;
-  final bool selected;
-  final bool enabled;
-  final VoidCallback onTap;
-
-  const _LiveActionTab({
-    required this.icon,
-    required this.label,
-    required this.color,
-    required this.selected,
-    required this.enabled,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final active = enabled && selected;
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: enabled ? onTap : null,
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          decoration: BoxDecoration(
-            color: active
-                ? color.withValues(alpha: 0.2)
-                : Colors.white.withValues(alpha: 0.04),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: active
-                  ? color.withValues(alpha: 0.6)
-                  : Colors.white.withValues(alpha: 0.08),
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 20,
-                color: enabled
-                    ? (selected ? color : Colors.white54)
-                    : Colors.grey,
-              ),
-              const SizedBox(height: 2),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: enabled
-                      ? (selected ? color : Colors.white54)
-                      : Colors.grey,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _ControlButton extends StatelessWidget {
   final String label;
   final IconData icon;
   final Color color;
   final bool enabled;
   final bool isSending;
+  final bool selected;
   final VoidCallback onPressed;
 
   const _ControlButton({
@@ -703,6 +632,7 @@ class _ControlButton extends StatelessWidget {
     required this.enabled,
     required this.isSending,
     required this.onPressed,
+    this.selected = false,
   });
 
   @override
@@ -711,7 +641,7 @@ class _ControlButton extends StatelessWidget {
       onPressed: enabled && !isSending ? onPressed : null,
       style: ElevatedButton.styleFrom(
         backgroundColor: enabled
-            ? color.withValues(alpha: 0.2)
+            ? color.withValues(alpha: selected ? 0.45 : 0.2)
             : Colors.grey.withValues(alpha: 0.1),
         foregroundColor: enabled ? color : Colors.grey,
         disabledBackgroundColor: Colors.grey.withValues(alpha: 0.1),
@@ -721,9 +651,9 @@ class _ControlButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
           side: BorderSide(
             color: enabled
-                ? color.withValues(alpha: 0.5)
+                ? color.withValues(alpha: selected ? 1.0 : 0.5)
                 : Colors.grey.withValues(alpha: 0.3),
-            width: 1,
+            width: selected ? 2 : 1,
           ),
         ),
       ),

@@ -1,7 +1,6 @@
-import 'dart:async';
-
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 /// Drag pad for live control.
 ///
@@ -34,31 +33,41 @@ class LiveControlPad extends StatefulWidget {
   State<LiveControlPad> createState() => _LiveControlPadState();
 }
 
-class _LiveControlPadState extends State<LiveControlPad> {
-  static const _sampleInterval = Duration(milliseconds: 40);
-  static const _sampleCount = 90;
+class _LiveControlPadState extends State<LiveControlPad>
+    with SingleTickerProviderStateMixin {
+  /// Samples once per frame. A timer coarse enough to be cheap dropped the
+  /// middle of a fast 0-100 sweep, which drew a step instead of a ramp.
+  static const _sampleCount = 180;
 
-  final List<double> _trace = List<double>.filled(_sampleCount, 0);
+  // Must be growable: List.filled is fixed-length, and removeAt/add on it throw
+  // every frame, which left the trace permanently flat at zero.
+  final List<double> _trace = List<double>.filled(
+    _sampleCount,
+    0,
+    growable: true,
+  );
 
-  Timer? _sampler;
+  /// Repaints the trace without rebuilding the widget every frame.
+  final ValueNotifier<int> _revision = ValueNotifier<int>(0);
+
+  Ticker? _ticker;
   double _intensity = 0;
   bool _isDragging = false;
 
   @override
   void initState() {
     super.initState();
-    _sampler = Timer.periodic(_sampleInterval, (_) {
-      if (!mounted) return;
-      setState(() {
-        _trace.removeAt(0);
-        _trace.add(_intensity);
-      });
-    });
+    _ticker = createTicker((_) {
+      _trace.removeAt(0);
+      _trace.add(_intensity);
+      _revision.value++;
+    })..start();
   }
 
   @override
   void dispose() {
-    _sampler?.cancel();
+    _ticker?.dispose();
+    _revision.dispose();
     super.dispose();
   }
 
@@ -132,6 +141,7 @@ class _LiveControlPadState extends State<LiveControlPad> {
                       trace: _trace,
                       maxIntensity: widget.maxIntensity.toDouble(),
                       color: color,
+                      repaint: _revision,
                     ),
                   ),
                 ),
@@ -231,7 +241,8 @@ class _TracePainter extends CustomPainter {
     required this.trace,
     required this.maxIntensity,
     required this.color,
-  });
+    required Listenable repaint,
+  }) : super(repaint: repaint);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -254,11 +265,7 @@ class _TracePainter extends CustomPainter {
       if (i == 0) {
         path.moveTo(x, y);
       } else {
-        // Smooth the corners so a held value does not look like a staircase.
-        final previousX = (i - 1) * stepX;
-        final previousY = yFor(trace[i - 1]);
-        final midX = (previousX + x) / 2;
-        path.cubicTo(midX, previousY, midX, y, x, y);
+        path.lineTo(x, y);
       }
     }
 
@@ -288,8 +295,7 @@ class _TracePainter extends CustomPainter {
     );
   }
 
-  // The trace list is mutated in place, so its identity never changes and a
-  // reference comparison would never repaint.
   @override
-  bool shouldRepaint(_TracePainter oldDelegate) => true;
+  bool shouldRepaint(_TracePainter oldDelegate) =>
+      oldDelegate.color != color || oldDelegate.maxIntensity != maxIntensity;
 }
