@@ -289,20 +289,10 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
     final shockerName = widget.shocker.name as String;
     final isOnline = widget.device?.isOnline ?? false;
 
-    // Live control takes the whole screen: the pad needs the room, and a
-    // part-height sheet invites the drag-to-dismiss that fights the pad.
-    final media = MediaQuery.of(context);
-    final sheetHeight = _isLive ? media.size.height - media.padding.top : null;
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      curve: Curves.easeOut,
-      height: sheetHeight,
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(_isLive ? 0 : 20),
-        ),
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: SingleChildScrollView(
         child: Column(
@@ -494,7 +484,10 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
 
                   const SizedBox(height: 24),
 
-                  _buildLiveBar(canControl),
+                  if (_isLive) ...[
+                    _buildLiveBar(canControl),
+                    const SizedBox(height: 16),
+                  ],
 
                   const SizedBox(height: 16),
 
@@ -567,10 +560,13 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                       color: _colorFor(_liveAction),
                       maxIntensity: maxIntensity,
                       enabled: canUseAction(_liveAction),
-                      height: 280,
+                      height: 220,
                       onChanged: _onLiveIntensity,
                       onReleased: _onLiveReleased,
                     ),
+                  ] else ...[
+                    const SizedBox(height: 20),
+                    _buildLiveBar(canControl),
                   ],
 
                   if (!canControl) ...[
