@@ -257,7 +257,7 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
 
     final Color accent = _isLive ? Colors.green : Colors.white70;
     final String status = switch (_liveState) {
-      LiveConnectionState.connected => 'Live - hold a button to control',
+      LiveConnectionState.connected => 'Live - drag the pad to control',
       LiveConnectionState.connecting => 'Connecting to gateway...',
       LiveConnectionState.disconnected => 'Live control is off',
     };
@@ -315,291 +315,307 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
     final shockerName = widget.shocker.name as String;
     final isOnline = widget.device?.isOnline ?? false;
 
-    return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    // Live control takes the whole screen: the pad needs the room, and a
+    // part-height sheet invites the drag-to-dismiss that fights the pad.
+    final media = MediaQuery.of(context);
+    final sheetHeight = _isLive ? media.size.height - media.padding.top : null;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+      height: sheetHeight,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(_isLive ? 0 : 20),
+        ),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Handle bar
-          Container(
-            margin: const EdgeInsets.only(top: 12, bottom: 8),
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.white30,
-              borderRadius: BorderRadius.circular(2),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle bar
+            Container(
+              margin: const EdgeInsets.only(top: 12, bottom: 8),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white30,
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
-          ),
 
-          // Header
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        shockerName,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Icon(
-                            isOnline ? Icons.circle : Icons.circle,
-                            size: 8,
-                            color: isOnline ? Colors.green : Colors.red,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            isOnline ? 'Online' : 'Offline',
-                            style: TextStyle(
-                              color: isOnline ? Colors.green : Colors.red,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white),
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-              ],
-            ),
-          ),
-
-          const Divider(color: Colors.white10, height: 1),
-
-          // Controls
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Intensity slider
-                const Text(
-                  'Intensity',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: SliderTheme(
-                        data: SliderThemeData(
-                          activeTrackColor: Colors.red,
-                          inactiveTrackColor: Colors.red.withValues(alpha: 0.3),
-                          thumbColor: Colors.red,
-                          overlayColor: Colors.red.withValues(alpha: 0.2),
-                          trackHeight: 4,
-                        ),
-                        child: Slider(
-                          value: _intensity,
-                          min: 0,
-                          max: maxIntensity.toDouble(),
-                          divisions: maxIntensity,
-                          onChanged: canControl
-                              ? (value) => setState(() => _intensity = value)
-                              : null,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Container(
-                      width: 60,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        '${_intensity.toInt()}%',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 24),
-
-                // Duration slider
-                const Text(
-                  'Duration',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: SliderTheme(
-                        data: SliderThemeData(
-                          activeTrackColor: Colors.blue,
-                          inactiveTrackColor: Colors.blue.withValues(
-                            alpha: 0.3,
-                          ),
-                          thumbColor: Colors.blue,
-                          overlayColor: Colors.blue.withValues(alpha: 0.2),
-                          trackHeight: 4,
-                        ),
-                        child: Slider(
-                          value: _duration,
-                          min: 300,
-                          max: maxDuration.toDouble(),
-                          divisions: ((maxDuration - 300) / 100).round(),
-                          onChanged: canControl
-                              ? (value) => setState(() => _duration = value)
-                              : null,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Container(
-                      width: 60,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        '${(_duration / 1000).toStringAsFixed(1)}s',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 24),
-
-                _buildLiveBar(canControl),
-
-                if (_isLive) ...[
-                  const SizedBox(height: 12),
-                  _buildLiveActionSelector(),
-                  const SizedBox(height: 12),
-                  LiveControlPad(
-                    color: _colorFor(_liveAction),
-                    maxIntensity: maxIntensity,
-                    enabled: _isLive && canUseAction(_liveAction),
-                    onChanged: _onLiveIntensity,
-                    onReleased: _onLiveReleased,
-                  ),
-                ],
-
-                const SizedBox(height: 16),
-
-                // Action buttons
-                Row(
-                  children: [
-                    Expanded(
-                      child: _ControlButton(
-                        label: 'Shock',
-                        icon: Icons.bolt,
-                        color: Colors.red,
-                        enabled: canControl && canUseAction(ControlType.shock),
-                        isSending: _isSending,
-                        onPressed: () =>
-                            _sendControl(ControlType.shock, 'Shock'),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _ControlButton(
-                        label: 'Vibrate',
-                        icon: Icons.vibration,
-                        color: Colors.purple,
-                        enabled:
-                            canControl && canUseAction(ControlType.vibrate),
-                        isSending: _isSending,
-                        onPressed: () =>
-                            _sendControl(ControlType.vibrate, 'Vibrate'),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _ControlButton(
-                        label: 'Sound',
-                        icon: Icons.volume_up,
-                        color: Colors.orange,
-                        enabled: canControl && canUseAction(ControlType.sound),
-                        isSending: _isSending,
-                        onPressed: () =>
-                            _sendControl(ControlType.sound, 'Sound'),
-                      ),
-                    ),
-                  ],
-                ),
-
-                if (!canControl) ...[
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.red.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: Colors.red.withValues(alpha: 0.3),
-                      ),
-                    ),
-                    child: Row(
+            // Header
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(
-                          Icons.warning_amber_rounded,
-                          color: Colors.red,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            isOnline
-                                ? 'You don\'t have permission to control this shocker'
-                                : 'Device is offline',
-                            style: TextStyle(color: Colors.red, fontSize: 14),
+                        Text(
+                          shockerName,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
                           ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(
+                              isOnline ? Icons.circle : Icons.circle,
+                              size: 8,
+                              color: isOnline ? Colors.green : Colors.red,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              isOnline ? 'Online' : 'Offline',
+                              style: TextStyle(
+                                color: isOnline ? Colors.green : Colors.red,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
                   ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
                 ],
-
-                const SizedBox(height: 20),
-              ],
+              ),
             ),
-          ),
-        ],
+
+            const Divider(color: Colors.white10, height: 1),
+
+            // Controls
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Intensity slider
+                  const Text(
+                    'Intensity',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: SliderTheme(
+                          data: SliderThemeData(
+                            activeTrackColor: Colors.red,
+                            inactiveTrackColor: Colors.red.withValues(
+                              alpha: 0.3,
+                            ),
+                            thumbColor: Colors.red,
+                            overlayColor: Colors.red.withValues(alpha: 0.2),
+                            trackHeight: 4,
+                          ),
+                          child: Slider(
+                            value: _intensity,
+                            min: 0,
+                            max: maxIntensity.toDouble(),
+                            divisions: maxIntensity,
+                            onChanged: canControl
+                                ? (value) => setState(() => _intensity = value)
+                                : null,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Container(
+                        width: 60,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '${_intensity.toInt()}%',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // Duration slider
+                  const Text(
+                    'Duration',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: SliderTheme(
+                          data: SliderThemeData(
+                            activeTrackColor: Colors.blue,
+                            inactiveTrackColor: Colors.blue.withValues(
+                              alpha: 0.3,
+                            ),
+                            thumbColor: Colors.blue,
+                            overlayColor: Colors.blue.withValues(alpha: 0.2),
+                            trackHeight: 4,
+                          ),
+                          child: Slider(
+                            value: _duration,
+                            min: 300,
+                            max: maxDuration.toDouble(),
+                            divisions: ((maxDuration - 300) / 100).round(),
+                            onChanged: canControl
+                                ? (value) => setState(() => _duration = value)
+                                : null,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Container(
+                        width: 60,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '${(_duration / 1000).toStringAsFixed(1)}s',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  _buildLiveBar(canControl),
+
+                  if (_isLive) ...[
+                    const SizedBox(height: 12),
+                    _buildLiveActionSelector(),
+                    const SizedBox(height: 12),
+                    LiveControlPad(
+                      color: _colorFor(_liveAction),
+                      maxIntensity: maxIntensity,
+                      enabled: _isLive && canUseAction(_liveAction),
+                      onChanged: _onLiveIntensity,
+                      onReleased: _onLiveReleased,
+                    ),
+                  ],
+
+                  const SizedBox(height: 16),
+
+                  // Action buttons
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _ControlButton(
+                          label: 'Shock',
+                          icon: Icons.bolt,
+                          color: Colors.red,
+                          enabled:
+                              canControl && canUseAction(ControlType.shock),
+                          isSending: _isSending,
+                          onPressed: () =>
+                              _sendControl(ControlType.shock, 'Shock'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _ControlButton(
+                          label: 'Vibrate',
+                          icon: Icons.vibration,
+                          color: Colors.purple,
+                          enabled:
+                              canControl && canUseAction(ControlType.vibrate),
+                          isSending: _isSending,
+                          onPressed: () =>
+                              _sendControl(ControlType.vibrate, 'Vibrate'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _ControlButton(
+                          label: 'Sound',
+                          icon: Icons.volume_up,
+                          color: Colors.orange,
+                          enabled:
+                              canControl && canUseAction(ControlType.sound),
+                          isSending: _isSending,
+                          onPressed: () =>
+                              _sendControl(ControlType.sound, 'Sound'),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  if (!canControl) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: Colors.red.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.warning_amber_rounded,
+                            color: Colors.red,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              isOnline
+                                  ? 'You don\'t have permission to control this shocker'
+                                  : 'Device is offline',
+                              style: TextStyle(color: Colors.red, fontSize: 14),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 /// Drag pad for live control.
@@ -11,6 +12,7 @@ class LiveControlPad extends StatefulWidget {
   final Color color;
   final int maxIntensity;
   final bool enabled;
+  final double height;
 
   /// Called continuously while dragging.
   final ValueChanged<int> onChanged;
@@ -25,6 +27,7 @@ class LiveControlPad extends StatefulWidget {
     required this.onReleased,
     this.maxIntensity = 100,
     this.enabled = true,
+    this.height = 180,
   });
 
   @override
@@ -84,18 +87,30 @@ class _LiveControlPadState extends State<LiveControlPad> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final size = Size(constraints.maxWidth, 180);
+        final size = Size(constraints.maxWidth, widget.height);
 
-        return GestureDetector(
+        return RawGestureDetector(
           behavior: HitTestBehavior.opaque,
-          onPanDown: (details) {
-            if (!widget.enabled) return;
-            setState(() => _isDragging = true);
-            _updateFrom(details.localPosition, size);
+          gestures: {
+            _PadDragRecognizer:
+                GestureRecognizerFactoryWithHandlers<_PadDragRecognizer>(
+                  _PadDragRecognizer.new,
+                  (recognizer) {
+                    recognizer.onDown = (details) {
+                      if (!widget.enabled) return;
+                      setState(() => _isDragging = true);
+                      _updateFrom(details.localPosition, size);
+                    };
+                    recognizer.onUpdate = (details) {
+                      _updateFrom(details.localPosition, size);
+                    };
+                    recognizer.onEnd = (_) {
+                      _release();
+                    };
+                    recognizer.onCancel = _release;
+                  },
+                ),
           },
-          onPanUpdate: (details) => _updateFrom(details.localPosition, size),
-          onPanEnd: (_) => _release(),
-          onPanCancel: _release,
           child: SizedBox(
             height: size.height,
             width: size.width,
@@ -155,6 +170,19 @@ class _LiveControlPadState extends State<LiveControlPad> {
   }
 }
 
+/// Claims the pointer as soon as it goes down.
+///
+/// Without this the modal sheet's drag-to-dismiss and the surrounding scroll
+/// view win the gesture arena, so dragging the pad closed the sheet or scrolled
+/// the page instead of setting intensity.
+class _PadDragRecognizer extends PanGestureRecognizer {
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    super.addAllowedPointer(event);
+    resolve(GestureDisposition.accepted);
+  }
+}
+
 class _IntensityPill extends StatelessWidget {
   final int value;
   final Color color;
@@ -209,19 +237,26 @@ class _TracePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (trace.length < 2 || maxIntensity <= 0) return;
 
+    // Inset the plot so a flat 0% line is drawn inside the box rather than
+    // half-clipped against its bottom edge.
+    const inset = 14.0;
+    final plotHeight = size.height - inset * 2;
     final stepX = size.width / (trace.length - 1);
+
+    double yFor(double value) =>
+        inset + plotHeight - (value / maxIntensity) * plotHeight;
+
     final path = Path();
 
     for (var i = 0; i < trace.length; i++) {
       final x = i * stepX;
-      final y = size.height - (trace[i] / maxIntensity) * size.height;
+      final y = yFor(trace[i]);
       if (i == 0) {
         path.moveTo(x, y);
       } else {
         // Smooth the corners so a held value does not look like a staircase.
         final previousX = (i - 1) * stepX;
-        final previousY =
-            size.height - (trace[i - 1] / maxIntensity) * size.height;
+        final previousY = yFor(trace[i - 1]);
         final midX = (previousX + x) / 2;
         path.cubicTo(midX, previousY, midX, y, x, y);
       }
