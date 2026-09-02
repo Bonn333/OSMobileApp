@@ -17,7 +17,6 @@ void main() {
       expect(info.country, 'DE');
     });
 
-    // The route is the client's to build: <prefix>/1/ws/live/<hubId>.
     test('builds the live socket url', () {
       final info = LcgInfo.fromJson({
         'host': 'de1-gateway.openshock.app',

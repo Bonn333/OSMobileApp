@@ -10,12 +10,6 @@ import 'api_client.dart';
 
 enum LiveConnectionState { disconnected, connecting, connected }
 
-/// Live control over the gateway websocket, matching the web frontend.
-///
-/// The API only routes here: `GET /2/devices/{id}/lcg` says which gateway to
-/// use, and the socket at `<prefix>/1/ws/live/{hubId}` takes control frames.
-/// Frames are resent on a tick while the user holds a control, and the hub
-/// stops on its own once they stop arriving.
 class LiveControlClient {
   static const _tag = 'LiveControl';
   static const Duration defaultTickInterval = Duration(milliseconds: 100);
@@ -34,7 +28,6 @@ class LiveControlClient {
   final _latencyController = StreamController<int>.broadcast();
   final _errorController = StreamController<String>.broadcast();
 
-  /// Latest frame per shocker, resent every tick until cleared.
   final Map<String, _LiveFrame> _activeFrames = {};
 
   LiveConnectionState _state = LiveConnectionState.disconnected;
@@ -74,8 +67,6 @@ class LiveControlClient {
     Logger.log('Connecting to $uri', tag: _tag);
 
     try {
-      // The gateway accepts the session as a header as well as a cookie, which
-      // is what lets a native client authenticate the socket.
       final channel = IOWebSocketChannel.connect(
         uri,
         headers: {
@@ -123,14 +114,11 @@ class LiveControlClient {
     }
   }
 
-  /// Holds [shockerId] at [intensity] until [release] is called.
   void hold(String shockerId, ControlType type, int intensity) {
     _activeFrames[shockerId] = _LiveFrame(type, intensity.clamp(0, 100));
     _sendFrame(shockerId, _activeFrames[shockerId]!);
   }
 
-  /// Stops [shockerId]. Sends a zero-intensity frame so the hub stops at once
-  /// rather than waiting for the frames to time out.
   void release(String shockerId) {
     final frame = _activeFrames.remove(shockerId);
     if (frame == null) return;
