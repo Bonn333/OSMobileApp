@@ -227,11 +227,25 @@ class ApiClient {
       final response = await _dio.get('/2/devices/$deviceId/lcg');
 
       if (response.statusCode == 200) {
-        final data = _extractData(response.data);
+        final data = _extractObject(response.data);
         if (data == null) {
+          Logger.error(
+            'Unexpected LCG response: ${response.data.runtimeType}',
+            tag: _tag,
+          );
           return ApiResponse.error('Unexpected response format');
         }
-        return ApiResponse.success(LcgInfo.fromJson(data));
+
+        try {
+          return ApiResponse.success(LcgInfo.fromJson(data));
+        } catch (e) {
+          Logger.error(
+            'Could not read LCG response, keys: ${data.keys.toList()}',
+            tag: _tag,
+            error: e,
+          );
+          return ApiResponse.error('Unexpected response format');
+        }
       }
 
       if (response.statusCode == 401) {
@@ -325,7 +339,10 @@ class ApiClient {
         return ApiResponse.success(null);
       }
       return ApiResponse.error(
-        _apiMessage(response, fallback: 'Logout failed: ${response.statusCode}'),
+        _apiMessage(
+          response,
+          fallback: 'Logout failed: ${response.statusCode}',
+        ),
       );
     } on DioException catch (e) {
       await _cookieJar.deleteAll();
@@ -333,7 +350,6 @@ class ApiClient {
       return ApiResponse.error(_handleDioError(e));
     }
   }
-
 
   Future<ApiResponse<SelfUser>> getSelf() async {
     await _ensureInitialized();
@@ -514,6 +530,16 @@ class ApiClient {
   // -------------------------
   // Helpers
   // -------------------------
+
+  /// v2 endpoints return the object directly; v1 wraps it in {message, data}.
+  Map<String, dynamic>? _extractObject(dynamic responseData) {
+    if (responseData is! Map<String, dynamic>) return null;
+
+    final data = responseData['data'];
+    if (data is Map<String, dynamic>) return data;
+
+    return responseData;
+  }
 
   Map<String, dynamic>? _extractData(dynamic responseData) {
     if (responseData is Map<String, dynamic> &&
