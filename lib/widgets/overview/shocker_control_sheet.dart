@@ -7,6 +7,7 @@ import '../../models/device_with_shockers.dart';
 import '../../services/live_control_client.dart';
 import '../../services/ws_client.dart';
 import '../../utils/logger.dart';
+import 'live_control_pad.dart';
 
 class ShockerControlSheet extends StatefulWidget {
   final dynamic shocker;
@@ -32,7 +33,7 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
   LiveControlClient? _live;
   LiveConnectionState _liveState = LiveConnectionState.disconnected;
   int _liveLatency = 0;
-  ControlType? _heldAction;
+  ControlType _liveAction = ControlType.vibrate;
   final List<StreamSubscription<dynamic>> _liveSubscriptions = [];
 
   bool get _isLive => _liveState == LiveConnectionState.connected;
@@ -94,21 +95,24 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
     setState(() {
       _liveState = LiveConnectionState.disconnected;
       _liveLatency = 0;
-      _heldAction = null;
     });
   }
 
-  void _holdLive(ControlType action) {
-    if (!_isLive || !canUseAction(action)) return;
-    setState(() => _heldAction = action);
-    _live?.hold(widget.shocker.id as String, action, _intensity.toInt());
+  void _onLiveIntensity(int intensity) {
+    if (!_isLive) return;
+    _live?.hold(widget.shocker.id as String, _liveAction, intensity);
   }
 
-  void _releaseLive() {
-    if (_heldAction == null) return;
+  void _onLiveReleased() {
     _live?.release(widget.shocker.id as String);
-    setState(() => _heldAction = null);
   }
+
+  Color _colorFor(ControlType action) => switch (action) {
+    ControlType.shock => Colors.red,
+    ControlType.vibrate => Colors.purple,
+    ControlType.sound => Colors.orange,
+    ControlType.stop => Colors.grey,
+  };
 
   void _showMessage(String message, {bool isError = false}) {
     if (!mounted) return;
@@ -220,6 +224,32 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
         setState(() => _isSending = false);
       }
     }
+  }
+
+  Widget _buildLiveActionSelector() {
+    const actions = [
+      (ControlType.sound, Icons.volume_up, 'Sound'),
+      (ControlType.vibrate, Icons.waves, 'Vibrate'),
+      (ControlType.shock, Icons.bolt, 'Shock'),
+    ];
+
+    return Row(
+      children: [
+        for (final (action, icon, label) in actions) ...[
+          Expanded(
+            child: _LiveActionTab(
+              icon: icon,
+              label: label,
+              color: _colorFor(action),
+              selected: _liveAction == action,
+              enabled: canUseAction(action),
+              onTap: () => setState(() => _liveAction = action),
+            ),
+          ),
+          if (action != ControlType.shock) const SizedBox(width: 8),
+        ],
+      ],
+    );
   }
 
   Widget _buildLiveBar(bool canControl) {
@@ -476,6 +506,19 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
 
                 _buildLiveBar(canControl),
 
+                if (_isLive) ...[
+                  const SizedBox(height: 12),
+                  _buildLiveActionSelector(),
+                  const SizedBox(height: 12),
+                  LiveControlPad(
+                    color: _colorFor(_liveAction),
+                    maxIntensity: maxIntensity,
+                    enabled: _isLive && canUseAction(_liveAction),
+                    onChanged: _onLiveIntensity,
+                    onReleased: _onLiveReleased,
+                  ),
+                ],
+
                 const SizedBox(height: 16),
 
                 // Action buttons
@@ -488,12 +531,8 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                         color: Colors.red,
                         enabled: canControl && canUseAction(ControlType.shock),
                         isSending: _isSending,
-                        isLive: _isLive,
-                        isHeld: _heldAction == ControlType.shock,
                         onPressed: () =>
                             _sendControl(ControlType.shock, 'Shock'),
-                        onHoldStart: () => _holdLive(ControlType.shock),
-                        onHoldEnd: _releaseLive,
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -505,12 +544,8 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                         enabled:
                             canControl && canUseAction(ControlType.vibrate),
                         isSending: _isSending,
-                        isLive: _isLive,
-                        isHeld: _heldAction == ControlType.vibrate,
                         onPressed: () =>
                             _sendControl(ControlType.vibrate, 'Vibrate'),
-                        onHoldStart: () => _holdLive(ControlType.vibrate),
-                        onHoldEnd: _releaseLive,
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -521,12 +556,8 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                         color: Colors.orange,
                         enabled: canControl && canUseAction(ControlType.sound),
                         isSending: _isSending,
-                        isLive: _isLive,
-                        isHeld: _heldAction == ControlType.sound,
                         onPressed: () =>
                             _sendControl(ControlType.sound, 'Sound'),
-                        onHoldStart: () => _holdLive(ControlType.sound),
-                        onHoldEnd: _releaseLive,
                       ),
                     ),
                   ],
@@ -574,17 +605,80 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
   }
 }
 
+class _LiveActionTab extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _LiveActionTab({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final active = enabled && selected;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: active
+                ? color.withValues(alpha: 0.2)
+                : Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: active
+                  ? color.withValues(alpha: 0.6)
+                  : Colors.white.withValues(alpha: 0.08),
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 20,
+                color: enabled
+                    ? (selected ? color : Colors.white54)
+                    : Colors.grey,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: enabled
+                      ? (selected ? color : Colors.white54)
+                      : Colors.grey,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ControlButton extends StatelessWidget {
   final String label;
   final IconData icon;
   final Color color;
   final bool enabled;
   final bool isSending;
-  final bool isLive;
-  final bool isHeld;
   final VoidCallback onPressed;
-  final VoidCallback? onHoldStart;
-  final VoidCallback? onHoldEnd;
 
   const _ControlButton({
     required this.label,
@@ -593,33 +687,15 @@ class _ControlButton extends StatelessWidget {
     required this.enabled,
     required this.isSending,
     required this.onPressed,
-    this.isLive = false,
-    this.isHeld = false,
-    this.onHoldStart,
-    this.onHoldEnd,
   });
 
   @override
   Widget build(BuildContext context) {
-    final button = _buildButton(context);
-
-    if (!isLive || !enabled) return button;
-
-    // Live control runs for as long as the button is held.
-    return Listener(
-      onPointerDown: (_) => onHoldStart?.call(),
-      onPointerUp: (_) => onHoldEnd?.call(),
-      onPointerCancel: (_) => onHoldEnd?.call(),
-      child: button,
-    );
-  }
-
-  Widget _buildButton(BuildContext context) {
     return ElevatedButton(
-      onPressed: isLive ? () {} : (enabled && !isSending ? onPressed : null),
+      onPressed: enabled && !isSending ? onPressed : null,
       style: ElevatedButton.styleFrom(
         backgroundColor: enabled
-            ? color.withValues(alpha: isHeld ? 0.5 : 0.2)
+            ? color.withValues(alpha: 0.2)
             : Colors.grey.withValues(alpha: 0.1),
         foregroundColor: enabled ? color : Colors.grey,
         disabledBackgroundColor: Colors.grey.withValues(alpha: 0.1),
