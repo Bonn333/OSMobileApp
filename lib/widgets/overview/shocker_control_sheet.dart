@@ -363,6 +363,10 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  _buildLiveBar(canControl),
+
+                  const SizedBox(height: 20),
+
                   if (!_isLive) ...[
                     // Intensity slider
                     const Text(
@@ -480,16 +484,18 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                         ),
                       ],
                     ),
+                  ] else ...[
+                    LiveControlPad(
+                      color: _colorFor(_liveAction),
+                      maxIntensity: maxIntensity,
+                      enabled: canUseAction(_liveAction),
+                      height: 220,
+                      onChanged: _onLiveIntensity,
+                      onReleased: _onLiveReleased,
+                    ),
                   ],
 
-                  const SizedBox(height: 24),
-
-                  if (_isLive) ...[
-                    _buildLiveBar(canControl),
-                    const SizedBox(height: 16),
-                  ],
-
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 20),
 
                   // Action buttons
                   Row(
@@ -553,21 +559,6 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                       ),
                     ],
                   ),
-
-                  if (_isLive) ...[
-                    const SizedBox(height: 16),
-                    LiveControlPad(
-                      color: _colorFor(_liveAction),
-                      maxIntensity: maxIntensity,
-                      enabled: canUseAction(_liveAction),
-                      height: 220,
-                      onChanged: _onLiveIntensity,
-                      onReleased: _onLiveReleased,
-                    ),
-                  ] else ...[
-                    const SizedBox(height: 20),
-                    _buildLiveBar(canControl),
-                  ],
 
                   if (!canControl) ...[
                     const SizedBox(height: 16),
