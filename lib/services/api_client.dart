@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/backend_info.dart';
 import '../models/device_with_shockers.dart';
+import '../models/lcg_info.dart';
 import '../models/login_request.dart';
 import '../models/self_user.dart';
 import '../models/shared_user.dart';
@@ -218,6 +219,58 @@ class ApiClient {
     }
   }
 
+  /// `GET /2/devices/{deviceId}/lcg` - which live control gateway to use.
+  Future<ApiResponse<LcgInfo>> getLiveControlGateway(String deviceId) async {
+    await _ensureInitialized();
+
+    try {
+      final response = await _dio.get('/2/devices/$deviceId/lcg');
+
+      if (response.statusCode == 200) {
+        final data = _extractObject(response.data);
+        if (data == null) {
+          Logger.error(
+            'Unexpected LCG response: ${response.data.runtimeType}',
+            tag: _tag,
+          );
+          return ApiResponse.error('Unexpected response format');
+        }
+
+        try {
+          return ApiResponse.success(LcgInfo.fromJson(data));
+        } catch (e) {
+          Logger.error(
+            'Could not read LCG response, keys: ${data.keys.toList()}',
+            tag: _tag,
+            error: e,
+          );
+          return ApiResponse.error('Unexpected response format');
+        }
+      }
+
+      if (response.statusCode == 401) {
+        return ApiResponse.error('Unauthorized - please login again');
+      }
+
+      if (response.statusCode == 404) {
+        return ApiResponse.error('Hub is not online');
+      }
+
+      return ApiResponse.error(
+        _apiMessage(
+          response,
+          fallback: 'Failed to reach the gateway: ${response.statusCode}',
+        ),
+      );
+    } on DioException catch (e) {
+      Logger.error('LCG DioException', tag: _tag, error: e);
+      return ApiResponse.error(_handleDioError(e));
+    } catch (e, stackTrace) {
+      Logger.error('LCG error', tag: _tag, error: e, stackTrace: stackTrace);
+      return ApiResponse.error('An unexpected error occurred');
+    }
+  }
+
   /// `POST /2/account/login`. On success the server sets the session cookie.
   Future<ApiResponse<void>> login(LoginRequest request) async {
     await _ensureInitialized();
@@ -286,7 +339,10 @@ class ApiClient {
         return ApiResponse.success(null);
       }
       return ApiResponse.error(
-        _apiMessage(response, fallback: 'Logout failed: ${response.statusCode}'),
+        _apiMessage(
+          response,
+          fallback: 'Logout failed: ${response.statusCode}',
+        ),
       );
     } on DioException catch (e) {
       await _cookieJar.deleteAll();
@@ -294,7 +350,6 @@ class ApiClient {
       return ApiResponse.error(_handleDioError(e));
     }
   }
-
 
   Future<ApiResponse<SelfUser>> getSelf() async {
     await _ensureInitialized();
@@ -475,6 +530,16 @@ class ApiClient {
   // -------------------------
   // Helpers
   // -------------------------
+
+  /// v2 endpoints return the object directly; v1 wraps it in {message, data}.
+  Map<String, dynamic>? _extractObject(dynamic responseData) {
+    if (responseData is! Map<String, dynamic>) return null;
+
+    final data = responseData['data'];
+    if (data is Map<String, dynamic>) return data;
+
+    return responseData;
+  }
 
   Map<String, dynamic>? _extractData(dynamic responseData) {
     if (responseData is Map<String, dynamic> &&

@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../models/control_type.dart';
 import '../../models/shared_shocker.dart';
 import '../../models/device_with_shockers.dart';
+import '../../services/live_control_client.dart';
 import '../../services/ws_client.dart';
 import '../../utils/logger.dart';
+import 'live_control_pad.dart';
 
 class ShockerControlSheet extends StatefulWidget {
   final dynamic shocker;
@@ -25,6 +29,101 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
   double _intensity = 50;
   double _duration = 1000; // milliseconds
   bool _isSending = false;
+
+  LiveControlClient? _live;
+  LiveConnectionState _liveState = LiveConnectionState.disconnected;
+  int _liveLatency = 0;
+  ControlType _liveAction = ControlType.vibrate;
+  final List<StreamSubscription<dynamic>> _liveSubscriptions = [];
+
+  bool get _isLive => _liveState == LiveConnectionState.connected;
+
+  String? get _hubId => widget.device?.id;
+
+  @override
+  void dispose() {
+    for (final subscription in _liveSubscriptions) {
+      subscription.cancel();
+    }
+    _live?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _toggleLive() async {
+    if (_live != null) {
+      await _stopLive();
+      return;
+    }
+
+    final hubId = _hubId;
+    if (hubId == null) {
+      _showMessage('This shocker has no hub to control live', isError: true);
+      return;
+    }
+
+    final client = LiveControlClient(hubId: hubId);
+    _live = client;
+
+    _liveSubscriptions.addAll([
+      client.states.listen((state) {
+        if (!mounted) return;
+        setState(() => _liveState = state);
+      }),
+      client.latency.listen((value) {
+        if (!mounted) return;
+        setState(() => _liveLatency = value);
+      }),
+      client.errors.listen((message) {
+        if (!mounted) return;
+        _showMessage(message, isError: true);
+      }),
+    ]);
+
+    await client.connect();
+  }
+
+  Future<void> _stopLive() async {
+    final client = _live;
+    _live = null;
+    for (final subscription in _liveSubscriptions) {
+      await subscription.cancel();
+    }
+    _liveSubscriptions.clear();
+    await client?.dispose();
+
+    if (!mounted) return;
+    setState(() {
+      _liveState = LiveConnectionState.disconnected;
+      _liveLatency = 0;
+    });
+  }
+
+  void _onLiveIntensity(int intensity) {
+    if (!_isLive) return;
+    _live?.hold(widget.shocker.id as String, _liveAction, intensity);
+  }
+
+  void _onLiveReleased() {
+    _live?.release(widget.shocker.id as String);
+  }
+
+  Color _colorFor(ControlType action) => switch (action) {
+    ControlType.shock => Colors.red,
+    ControlType.vibrate => Colors.purple,
+    ControlType.sound => Colors.orange,
+    ControlType.stop => Colors.grey,
+  };
+
+  void _showMessage(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red : Colors.green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
 
   int get maxIntensity {
     if (widget.shocker is SharedShocker) {
@@ -115,12 +214,74 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
         }
       }
     } catch (e) {
-      Logger.error('Error sending $actionName', tag: 'ShockerControl', error: e);
+      Logger.error(
+        'Error sending $actionName',
+        tag: 'ShockerControl',
+        error: e,
+      );
     } finally {
       if (mounted) {
         setState(() => _isSending = false);
       }
     }
+  }
+
+  Widget _buildLiveBar(bool canControl) {
+    final connecting = _liveState == LiveConnectionState.connecting;
+
+    final Color accent = _isLive ? Colors.green : Colors.white70;
+    final String status = switch (_liveState) {
+      LiveConnectionState.connected => 'Live - drag the pad to control',
+      LiveConnectionState.connecting => 'Connecting to gateway...',
+      LiveConnectionState.disconnected => 'Live control is off',
+    };
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: accent.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            _isLive ? Icons.bolt : Icons.bolt_outlined,
+            color: accent,
+            size: 20,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(status, style: TextStyle(color: accent, fontSize: 12)),
+                if (_isLive && _liveLatency > 0)
+                  Text(
+                    '${_liveLatency}ms',
+                    style: TextStyle(
+                      color: Colors.green.shade200,
+                      fontSize: 11,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (connecting)
+            const SizedBox(
+              height: 16,
+              width: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            Switch(
+              value: _isLive,
+              onChanged: canControl ? (_) => _toggleLive() : null,
+              activeThumbColor: Colors.green,
+            ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -133,263 +294,310 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
         color: Color(0xFF1A1A1A),
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Handle bar
-          Container(
-            margin: const EdgeInsets.only(top: 12, bottom: 8),
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.white30,
-              borderRadius: BorderRadius.circular(2),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle bar
+            Container(
+              margin: const EdgeInsets.only(top: 12, bottom: 8),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white30,
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
-          ),
 
-          // Header
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        shockerName,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Icon(
-                            isOnline ? Icons.circle : Icons.circle,
-                            size: 8,
-                            color: isOnline ? Colors.green : Colors.red,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            isOnline ? 'Online' : 'Offline',
-                            style: TextStyle(
-                              color: isOnline ? Colors.green : Colors.red,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white),
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-              ],
-            ),
-          ),
-
-          const Divider(color: Colors.white10, height: 1),
-
-          // Controls
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Intensity slider
-                const Text(
-                  'Intensity',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: SliderTheme(
-                        data: SliderThemeData(
-                          activeTrackColor: Colors.red,
-                          inactiveTrackColor: Colors.red.withValues(alpha: 0.3),
-                          thumbColor: Colors.red,
-                          overlayColor: Colors.red.withValues(alpha: 0.2),
-                          trackHeight: 4,
-                        ),
-                        child: Slider(
-                          value: _intensity,
-                          min: 0,
-                          max: maxIntensity.toDouble(),
-                          divisions: maxIntensity,
-                          onChanged: canControl
-                              ? (value) => setState(() => _intensity = value)
-                              : null,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Container(
-                      width: 60,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        '${_intensity.toInt()}%',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 24),
-
-                // Duration slider
-                const Text(
-                  'Duration',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: SliderTheme(
-                        data: SliderThemeData(
-                          activeTrackColor: Colors.blue,
-                          inactiveTrackColor: Colors.blue.withValues(alpha: 0.3),
-                          thumbColor: Colors.blue,
-                          overlayColor: Colors.blue.withValues(alpha: 0.2),
-                          trackHeight: 4,
-                        ),
-                        child: Slider(
-                          value: _duration,
-                          min: 300,
-                          max: maxDuration.toDouble(),
-                          divisions: ((maxDuration - 300) / 100).round(),
-                          onChanged: canControl
-                              ? (value) => setState(() => _duration = value)
-                              : null,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Container(
-                      width: 60,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        '${(_duration / 1000).toStringAsFixed(1)}s',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 32),
-
-                // Action buttons
-                Row(
-                  children: [
-                    Expanded(
-                      child: _ControlButton(
-                        label: 'Shock',
-                        icon: Icons.bolt,
-                        color: Colors.red,
-                        enabled: canControl && canUseAction(ControlType.shock),
-                        isSending: _isSending,
-                        onPressed: () => _sendControl(ControlType.shock, 'Shock'),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _ControlButton(
-                        label: 'Vibrate',
-                        icon: Icons.vibration,
-                        color: Colors.purple,
-                        enabled: canControl && canUseAction(ControlType.vibrate),
-                        isSending: _isSending,
-                        onPressed: () => _sendControl(ControlType.vibrate, 'Vibrate'),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _ControlButton(
-                        label: 'Sound',
-                        icon: Icons.volume_up,
-                        color: Colors.orange,
-                        enabled: canControl && canUseAction(ControlType.sound),
-                        isSending: _isSending,
-                        onPressed: () => _sendControl(ControlType.sound, 'Sound'),
-                      ),
-                    ),
-                  ],
-                ),
-
-                if (!canControl) ...[
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.red.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: Colors.red.withValues(alpha: 0.3),
-                      ),
-                    ),
-                    child: Row(
+            // Header
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(
-                          Icons.warning_amber_rounded,
-                          color: Colors.red,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            isOnline
-                                ? 'You don\'t have permission to control this shocker'
-                                : 'Device is offline',
-                            style: TextStyle(color: Colors.red, fontSize: 14),
+                        Text(
+                          shockerName,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
                           ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(
+                              isOnline ? Icons.circle : Icons.circle,
+                              size: 8,
+                              color: isOnline ? Colors.green : Colors.red,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              isOnline ? 'Online' : 'Offline',
+                              style: TextStyle(
+                                color: isOnline ? Colors.green : Colors.red,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
                   ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
                 ],
-
-                const SizedBox(height: 20),
-              ],
+              ),
             ),
-          ),
-        ],
+
+            const Divider(color: Colors.white10, height: 1),
+
+            // Controls
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildLiveBar(canControl),
+
+                  const SizedBox(height: 20),
+
+                  if (!_isLive) ...[
+                    // Intensity slider
+                    const Text(
+                      'Intensity',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SliderTheme(
+                            data: SliderThemeData(
+                              activeTrackColor: Colors.red,
+                              inactiveTrackColor: Colors.red.withValues(
+                                alpha: 0.3,
+                              ),
+                              thumbColor: Colors.red,
+                              overlayColor: Colors.red.withValues(alpha: 0.2),
+                              trackHeight: 4,
+                            ),
+                            child: Slider(
+                              value: _intensity,
+                              min: 0,
+                              max: maxIntensity.toDouble(),
+                              divisions: maxIntensity,
+                              onChanged: canControl
+                                  ? (value) =>
+                                        setState(() => _intensity = value)
+                                  : null,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Container(
+                          width: 60,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '${_intensity.toInt()}%',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // Duration slider
+                    const Text(
+                      'Duration',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SliderTheme(
+                            data: SliderThemeData(
+                              activeTrackColor: Colors.blue,
+                              inactiveTrackColor: Colors.blue.withValues(
+                                alpha: 0.3,
+                              ),
+                              thumbColor: Colors.blue,
+                              overlayColor: Colors.blue.withValues(alpha: 0.2),
+                              trackHeight: 4,
+                            ),
+                            child: Slider(
+                              value: _duration,
+                              min: 300,
+                              max: maxDuration.toDouble(),
+                              divisions: ((maxDuration - 300) / 100).round(),
+                              onChanged: canControl
+                                  ? (value) => setState(() => _duration = value)
+                                  : null,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Container(
+                          width: 60,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '${(_duration / 1000).toStringAsFixed(1)}s',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ] else ...[
+                    LiveControlPad(
+                      color: _colorFor(_liveAction),
+                      maxIntensity: maxIntensity,
+                      enabled: canUseAction(_liveAction),
+                      height: 220,
+                      onChanged: _onLiveIntensity,
+                      onReleased: _onLiveReleased,
+                    ),
+                  ],
+
+                  const SizedBox(height: 20),
+
+                  // Action buttons
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _ControlButton(
+                          label: 'Shock',
+                          icon: Icons.bolt,
+                          color: Colors.red,
+                          enabled:
+                              canControl && canUseAction(ControlType.shock),
+                          isSending: _isSending,
+                          selected: _isLive && _liveAction == ControlType.shock,
+                          onPressed: () {
+                            if (_isLive) {
+                              setState(() => _liveAction = ControlType.shock);
+                            } else {
+                              _sendControl(ControlType.shock, 'Shock');
+                            }
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _ControlButton(
+                          label: 'Vibrate',
+                          icon: Icons.vibration,
+                          color: Colors.purple,
+                          enabled:
+                              canControl && canUseAction(ControlType.vibrate),
+                          isSending: _isSending,
+                          selected:
+                              _isLive && _liveAction == ControlType.vibrate,
+                          onPressed: () {
+                            if (_isLive) {
+                              setState(() => _liveAction = ControlType.vibrate);
+                            } else {
+                              _sendControl(ControlType.vibrate, 'Vibrate');
+                            }
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _ControlButton(
+                          label: 'Sound',
+                          icon: Icons.volume_up,
+                          color: Colors.orange,
+                          enabled:
+                              canControl && canUseAction(ControlType.sound),
+                          isSending: _isSending,
+                          selected: _isLive && _liveAction == ControlType.sound,
+                          onPressed: () {
+                            if (_isLive) {
+                              setState(() => _liveAction = ControlType.sound);
+                            } else {
+                              _sendControl(ControlType.sound, 'Sound');
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  if (!canControl) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: Colors.red.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.warning_amber_rounded,
+                            color: Colors.red,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              isOnline
+                                  ? 'You don\'t have permission to control this shocker'
+                                  : 'Device is offline',
+                              style: TextStyle(color: Colors.red, fontSize: 14),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -401,6 +609,7 @@ class _ControlButton extends StatelessWidget {
   final Color color;
   final bool enabled;
   final bool isSending;
+  final bool selected;
   final VoidCallback onPressed;
 
   const _ControlButton({
@@ -410,6 +619,7 @@ class _ControlButton extends StatelessWidget {
     required this.enabled,
     required this.isSending,
     required this.onPressed,
+    this.selected = false,
   });
 
   @override
@@ -417,7 +627,9 @@ class _ControlButton extends StatelessWidget {
     return ElevatedButton(
       onPressed: enabled && !isSending ? onPressed : null,
       style: ElevatedButton.styleFrom(
-        backgroundColor: enabled ? color.withValues(alpha: 0.2) : Colors.grey.withValues(alpha: 0.1),
+        backgroundColor: enabled
+            ? color.withValues(alpha: selected ? 0.45 : 0.2)
+            : Colors.grey.withValues(alpha: 0.1),
         foregroundColor: enabled ? color : Colors.grey,
         disabledBackgroundColor: Colors.grey.withValues(alpha: 0.1),
         disabledForegroundColor: Colors.grey,
@@ -425,8 +637,10 @@ class _ControlButton extends StatelessWidget {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
           side: BorderSide(
-            color: enabled ? color.withValues(alpha: 0.5) : Colors.grey.withValues(alpha: 0.3),
-            width: 1,
+            color: enabled
+                ? color.withValues(alpha: selected ? 1.0 : 0.5)
+                : Colors.grey.withValues(alpha: 0.3),
+            width: selected ? 2 : 1,
           ),
         ),
       ),
@@ -437,10 +651,7 @@ class _ControlButton extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             label,
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
           ),
         ],
       ),
