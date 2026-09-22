@@ -1,6 +1,7 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+
+import '../eager_pan_recognizer.dart';
 
 /// Drag pad for live control.
 ///
@@ -101,9 +102,9 @@ class _LiveControlPadState extends State<LiveControlPad>
         return RawGestureDetector(
           behavior: HitTestBehavior.opaque,
           gestures: {
-            _PadDragRecognizer:
-                GestureRecognizerFactoryWithHandlers<_PadDragRecognizer>(
-                  _PadDragRecognizer.new,
+            EagerPanRecognizer:
+                GestureRecognizerFactoryWithHandlers<EagerPanRecognizer>(
+                  EagerPanRecognizer.new,
                   (recognizer) {
                     recognizer.onDown = (details) {
                       if (!widget.enabled) return;
@@ -177,19 +178,6 @@ class _LiveControlPadState extends State<LiveControlPad>
         );
       },
     );
-  }
-}
-
-/// Claims the pointer as soon as it goes down.
-///
-/// Without this the modal sheet's drag-to-dismiss and the surrounding scroll
-/// view win the gesture arena, so dragging the pad closed the sheet or scrolled
-/// the page instead of setting intensity.
-class _PadDragRecognizer extends PanGestureRecognizer {
-  @override
-  void addAllowedPointer(PointerDownEvent event) {
-    super.addAllowedPointer(event);
-    resolve(GestureDisposition.accepted);
   }
 }
 
