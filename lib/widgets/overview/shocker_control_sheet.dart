@@ -7,6 +7,7 @@ import '../../models/device_with_shockers.dart';
 import '../../services/live_control_client.dart';
 import '../../services/ws_client.dart';
 import '../../utils/logger.dart';
+import 'arc_slider.dart';
 import 'live_control_pad.dart';
 
 class ShockerControlSheet extends StatefulWidget {
@@ -368,117 +369,47 @@ class _ShockerControlSheetState extends State<ShockerControlSheet> {
                   const SizedBox(height: 20),
 
                   if (!_isLive) ...[
-                    // Intensity slider
-                    const Text(
-                      'Intensity',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
                     Row(
                       children: [
                         Expanded(
-                          child: SliderTheme(
-                            data: SliderThemeData(
-                              activeTrackColor: Colors.red,
-                              inactiveTrackColor: Colors.red.withValues(
-                                alpha: 0.3,
-                              ),
-                              thumbColor: Colors.red,
-                              overlayColor: Colors.red.withValues(alpha: 0.2),
-                              trackHeight: 4,
-                            ),
-                            child: Slider(
+                          child: Center(
+                            child: ArcSlider(
+                              label: 'Intensity',
                               value: _intensity,
                               min: 0,
                               max: maxIntensity.toDouble(),
-                              divisions: maxIntensity,
-                              onChanged: canControl
-                                  ? (value) =>
-                                        setState(() => _intensity = value)
-                                  : null,
+                              color: Colors.red,
+                              enabled: canControl,
+                              display: (value) => '${value.round()}',
+                              editValue: (value) => '${value.round()}',
+                              parse: (text) =>
+                                  double.tryParse(text.replaceAll(',', '.')),
+                              onChanged: (value) =>
+                                  setState(() => _intensity = value),
                             ),
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        Container(
-                          width: 60,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            '${_intensity.toInt()}%',
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    // Duration slider
-                    const Text(
-                      'Duration',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
                         Expanded(
-                          child: SliderTheme(
-                            data: SliderThemeData(
-                              activeTrackColor: Colors.blue,
-                              inactiveTrackColor: Colors.blue.withValues(
-                                alpha: 0.3,
-                              ),
-                              thumbColor: Colors.blue,
-                              overlayColor: Colors.blue.withValues(alpha: 0.2),
-                              trackHeight: 4,
-                            ),
-                            child: Slider(
+                          child: Center(
+                            child: ArcSlider(
+                              label: 'Duration',
                               value: _duration,
                               min: 300,
                               max: maxDuration.toDouble(),
-                              divisions: ((maxDuration - 300) / 100).round(),
-                              onChanged: canControl
-                                  ? (value) => setState(() => _duration = value)
-                                  : null,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Container(
-                          width: 60,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            '${(_duration / 1000).toStringAsFixed(1)}s',
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
+                              color: Colors.blue,
+                              enabled: canControl,
+                              display: (value) =>
+                                  '${(value / 1000).toStringAsFixed(1)}s',
+                              editValue: (value) =>
+                                  (value / 1000).toStringAsFixed(1),
+                              parse: (text) {
+                                final seconds = double.tryParse(
+                                  text.replaceAll(',', '.'),
+                                );
+                                return seconds == null ? null : seconds * 1000;
+                              },
+                              onChanged: (value) =>
+                                  setState(() => _duration = value),
                             ),
                           ),
                         ),
