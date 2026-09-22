@@ -138,27 +138,31 @@ class _ArcSliderState extends State<ArcSlider> {
           child: Stack(
             children: [
               Positioned.fill(
-                child: RawGestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  gestures: {
-                    EagerPanRecognizer:
-                        GestureRecognizerFactoryWithHandlers<
-                          EagerPanRecognizer
-                        >(EagerPanRecognizer.new, (recognizer) {
-                          recognizer.onDown = (details) =>
-                              _updateFromPosition(details.localPosition);
-                          recognizer.onUpdate = (details) =>
-                              _updateFromPosition(details.localPosition);
-                        }),
-                  },
-                  child: CustomPaint(
-                    painter: _ArcPainter(
-                      fraction: _fraction,
-                      color: color,
-                      startAngle: _startAngle,
-                      sweepAngle: _sweepAngle,
-                      strokeWidth: _strokeWidth,
-                      knobRadius: _knobRadius,
+                // Listener sets the value on a plain tap: it sees pointers
+                // directly, so it does not compete with the pan recognizer.
+                child: Listener(
+                  onPointerDown: (event) =>
+                      _updateFromPosition(event.localPosition),
+                  child: RawGestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    gestures: {
+                      EagerPanRecognizer:
+                          GestureRecognizerFactoryWithHandlers<
+                            EagerPanRecognizer
+                          >(EagerPanRecognizer.new, (recognizer) {
+                            recognizer.onUpdate = (details) =>
+                                _updateFromPosition(details.localPosition);
+                          }),
+                    },
+                    child: CustomPaint(
+                      painter: _ArcPainter(
+                        fraction: _fraction,
+                        color: color,
+                        startAngle: _startAngle,
+                        sweepAngle: _sweepAngle,
+                        strokeWidth: _strokeWidth,
+                        knobRadius: _knobRadius,
+                      ),
                     ),
                   ),
                 ),
@@ -166,7 +170,10 @@ class _ArcSliderState extends State<ArcSlider> {
               Center(
                 child: SizedBox(
                   width: widget.size * 0.56,
-                  child: _editing ? _buildEditor(color) : _buildValue(),
+                  height: 46,
+                  child: Center(
+                    child: _editing ? _buildEditor(color) : _buildValue(),
+                  ),
                 ),
               ),
             ],
@@ -190,6 +197,7 @@ class _ArcSliderState extends State<ArcSlider> {
       onTap: _startEditing,
       behavior: HitTestBehavior.opaque,
       child: FittedBox(
+        fit: BoxFit.scaleDown,
         child: Text(
           widget.display(widget.value),
           textAlign: TextAlign.center,

@@ -56,6 +56,18 @@ void main() {
     expect(value, closeTo(50, 6));
   });
 
+  testWidgets('tapping the ring jumps to that value', (tester) async {
+    await pumpSlider(tester);
+
+    final rect = tester.getRect(find.byType(ArcSlider));
+    final arcCentre = Offset(rect.center.dx, rect.top + 66);
+
+    await tester.tapAt(arcCentre - const Offset(0, 40));
+    await tester.pump();
+
+    expect(value, closeTo(50, 6));
+  });
+
   testWidgets('tapping the value opens a keyboard editor', (tester) async {
     await pumpSlider(tester, initial: 25);
 
