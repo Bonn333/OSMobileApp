@@ -22,6 +22,9 @@ dependencies:
   # Used for turnstile
   cloudflare_turnstile: ^3.8.1
 
+  # Runs the OAuth sign-in flow and reads its session cookie
+  flutter_inappwebview: ^6.1.5
+
   # Preference and Storage Dependencies
   shared_preferences: ^2.5.4
   flutter_secure_storage: ^10.0.0

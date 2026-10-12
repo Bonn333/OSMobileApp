@@ -110,18 +110,7 @@ class AuthProvider extends ChangeNotifier {
         return false;
       }
 
-      final selfResponse = await _apiClient.getSelf();
-      if (!selfResponse.isSuccess || selfResponse.data == null) {
-        _error = selfResponse.error ?? 'Failed to fetch user data';
-        Logger.error('Failed to fetch self user data', tag: _tag);
-        _setState(AuthState.unauthenticated);
-        return false;
-      }
-
-      _selfUser = selfResponse.data;
-      Logger.log('Login successful', tag: _tag);
-      _setState(AuthState.authenticated);
-      return true;
+      return await _loadSelfAfterLogin();
     } catch (e, stackTrace) {
       _error = 'Login failed: $e';
       Logger.error(
@@ -133,6 +122,42 @@ class AuthProvider extends ChangeNotifier {
       _setState(AuthState.unauthenticated);
       return false;
     }
+  }
+
+  /// Signs in with a session the OAuth flow obtained.
+  Future<bool> loginWithSession(String sessionToken) async {
+    Logger.log('loginWithSession called', tag: _tag);
+    _setState(AuthState.loading, clearError: true);
+
+    try {
+      await _apiClient.adoptSession(sessionToken);
+      return await _loadSelfAfterLogin();
+    } catch (e, stackTrace) {
+      _error = 'Login failed: $e';
+      Logger.error(
+        'OAuth login exception: $_error',
+        tag: _tag,
+        error: e,
+        stackTrace: stackTrace,
+      );
+      _setState(AuthState.unauthenticated);
+      return false;
+    }
+  }
+
+  Future<bool> _loadSelfAfterLogin() async {
+    final selfResponse = await _apiClient.getSelf();
+    if (!selfResponse.isSuccess || selfResponse.data == null) {
+      _error = selfResponse.error ?? 'Failed to fetch user data';
+      Logger.error('Failed to fetch self user data', tag: _tag);
+      _setState(AuthState.unauthenticated);
+      return false;
+    }
+
+    _selfUser = selfResponse.data;
+    Logger.log('Login successful', tag: _tag);
+    _setState(AuthState.authenticated);
+    return true;
   }
 
   Future<void> logout() async {

@@ -180,6 +180,21 @@ class ApiClient {
     }
   }
 
+  /// Stores a session obtained outside Dio, e.g. by the OAuth WebView.
+  Future<void> adoptSession(String sessionToken) async {
+    await _ensureInitialized();
+
+    final uri = Uri.parse(_baseUrl);
+    final cookie = Cookie(sessionCookieName, sessionToken)
+      ..httpOnly = true
+      ..secure = uri.scheme == 'https';
+
+    // A stale domain-wide session cookie would be sent next to this one.
+    await _cookieJar.delete(uri, true);
+    await _cookieJar.saveFromResponse(uri, [cookie]);
+    await _saveCookiesToSecureStorage();
+  }
+
   // -------------------------
   // API calls
   // -------------------------
