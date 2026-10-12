@@ -7,9 +7,11 @@ import 'package:provider/provider.dart';
 import '../models/backend_info.dart';
 import '../providers/auth_provider.dart';
 import '../services/api_client.dart';
+import '../services/oauth_flow.dart';
 import '../utils/logger.dart';
 import '../utils/validators.dart';
 import '../widgets/custom_snackbar.dart';
+import 'oauth_screen.dart';
 import 'overview_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -216,14 +218,7 @@ class _LoginScreenState extends State<LoginScreen> {
     CustomSnackbar.dismiss('login');
 
     if (success) {
-      Logger.log(
-        'Sign-in successful, navigating to overview',
-        tag: 'LoginScreen',
-      );
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const OverviewScreen()),
-        (route) => false,
-      );
+      _goToOverview();
       return;
     }
 
@@ -234,6 +229,102 @@ class _LoginScreenState extends State<LoginScreen> {
       context,
       title: 'Sign In Failed',
       description: authProvider.error ?? 'Please check your credentials',
+    );
+  }
+
+  Future<void> _handleOAuth(String provider) async {
+    final frontendUrl = _backendInfo?.frontendUrl;
+    if (frontendUrl == null) return;
+
+    final authProvider = context.read<AuthProvider>();
+    final label = OAuthFlow.providerLabel(provider);
+
+    Logger.log('Starting $provider sign-in', tag: 'LoginScreen');
+    _setLoading(true);
+
+    final result = await Navigator.of(context).push<OAuthResult>(
+      MaterialPageRoute(
+        builder: (_) => OAuthScreen(
+          provider: provider,
+          apiBaseUrl: authProvider.currentHost,
+          frontendUrl: frontendUrl,
+        ),
+      ),
+    );
+    if (!mounted) return;
+
+    switch (result) {
+      case null:
+        Logger.log('$provider sign-in cancelled', tag: 'LoginScreen');
+        _setLoading(false);
+      case OAuthFailed(:final message, code: OAuthFlow.googleBlockedInApp):
+        _setLoading(false);
+        // Too long for a snackbar, and the user needs time to read it.
+        await showDialog<void>(
+          context: context,
+          builder: (context) => AlertDialog(
+            backgroundColor: const Color(0xFF1A1A1A),
+            icon: const Icon(Icons.block, color: Colors.orange),
+            title: const Text('Google Blocked the Sign-In'),
+            content: Text(message),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      case OAuthFailed(:final message):
+        _setLoading(false);
+        CustomSnackbar.error(
+          context,
+          title: 'Sign In Failed',
+          description: message,
+        );
+      case OAuthPendingActivation():
+        _setLoading(false);
+        CustomSnackbar.success(
+          context,
+          title: 'Account Created',
+          description:
+              'Check your email to activate the account, then sign in '
+              'with $label again.',
+        );
+      case OAuthSignedIn(:final sessionToken):
+        CustomSnackbar.loading(
+          context,
+          title: 'Signing In',
+          description: 'Please wait...',
+          key: 'login',
+        );
+
+        final success = await authProvider.loginWithSession(sessionToken);
+        _setLoading(false);
+        if (!mounted) return;
+        CustomSnackbar.dismiss('login');
+
+        if (success) {
+          _goToOverview();
+          return;
+        }
+
+        CustomSnackbar.error(
+          context,
+          title: 'Sign In Failed',
+          description: authProvider.error ?? 'Please try again',
+        );
+    }
+  }
+
+  void _goToOverview() {
+    Logger.log(
+      'Sign-in successful, navigating to overview',
+      tag: 'LoginScreen',
+    );
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const OverviewScreen()),
+      (route) => false,
     );
   }
 
@@ -315,6 +406,70 @@ class _LoginScreenState extends State<LoginScreen> {
             _onTurnstileError('${error.message} (code ${error.code})'),
         onTimeout: () => _onTurnstileError('The captcha timed out.'),
       ),
+    );
+  }
+
+  Widget _buildOAuthSection() {
+    final info = _backendInfo;
+    if (_loadingBackendInfo || info == null || !info.isOAuthAvailable) {
+      return const SizedBox.shrink();
+    }
+
+    final enabled = !_isLoading && !_hostChangePending;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 24),
+        Row(
+          children: [
+            const Expanded(child: Divider(color: Colors.white24)),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                'or continue with',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.5),
+                  fontSize: 12,
+                ),
+              ),
+            ),
+            const Expanded(child: Divider(color: Colors.white24)),
+          ],
+        ),
+        for (final provider in info.oAuthProviders) ...[
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: enabled ? () => _handleOAuth(provider) : null,
+            icon: Icon(
+              provider.toLowerCase() == 'discord' ? Icons.discord : Icons.login,
+            ),
+            label: Text(
+              'Continue with ${OAuthFlow.providerLabel(provider)}',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white,
+              side: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+          if (OAuthFlow.providerNotice(provider) case final notice?) ...[
+            const SizedBox(height: 6),
+            Text(
+              notice,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.5),
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ],
+      ],
     );
   }
 
@@ -528,6 +683,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
                 ),
+                _buildOAuthSection(),
                 const SizedBox(height: 24),
               ],
             ),
